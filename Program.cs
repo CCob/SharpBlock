@@ -153,7 +153,7 @@ namespace SharpBlock {
                 Console.WriteLine($"[!] Failed to create process {program}");
                 return;
             }
-
+          
             Console.WriteLine($"[+] Launched process {program} with PID {pi.dwProcessId}");
 
             bool bContinueDebugging = true;
@@ -172,7 +172,8 @@ namespace SharpBlock {
                             processHandles.Add(DebugEvent.dwProcessId, CreateProcessDebugInfo.hProcess);
                             break;
                         case WinAPI.EXIT_PROCESS_DEBUG_EVENT:
-                            bContinueDebugging = false;
+                            if(pi.dwProcessId == DebugEvent.dwProcessId)
+                                bContinueDebugging = false;
                             break;
                         case WinAPI.LOAD_DLL_DEBUG_EVENT:
                             WinAPI.LOAD_DLL_DEBUG_INFO LoadDLLDebugInfo = (WinAPI.LOAD_DLL_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.LOAD_DLL_DEBUG_INFO));
