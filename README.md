@@ -13,3 +13,5 @@ SharpBlock by @_EthicalChaos_
   -d, --description=VALUE    Description string to block
   -h, --help                 Display this help
   ```
+
+Accompanying Blog Post: https://ethicalchaos.dev/2020/06/14/lets-create-an-edr-and-bypass-it-part-2/
