@@ -122,7 +122,7 @@ namespace SharpBlock
         [DllImport("kernel32.dll")]
         public static extern bool ContinueDebugEvent(uint dwProcessId, uint dwThreadId,
            uint dwContinueStatus);
-        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool CreateProcess(
            string lpApplicationName,
            string lpCommandLine,
@@ -161,5 +161,9 @@ namespace SharpBlock
           byte[] lpBuffer,
           Int32 nSize,
           out IntPtr lpNumberOfBytesWritten);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetExitCodeProcess(IntPtr hProcess, out int lpExitCode);
     }
 }

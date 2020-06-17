@@ -172,12 +172,16 @@ namespace SharpBlock {
                             processHandles.Add(DebugEvent.dwProcessId, CreateProcessDebugInfo.hProcess);
                             break;
                         case WinAPI.EXIT_PROCESS_DEBUG_EVENT:
-                            if(pi.dwProcessId == DebugEvent.dwProcessId)
+                            if (pi.dwProcessId == DebugEvent.dwProcessId) {
                                 bContinueDebugging = false;
+                            }
                             break;
                         case WinAPI.LOAD_DLL_DEBUG_EVENT:
                             WinAPI.LOAD_DLL_DEBUG_INFO LoadDLLDebugInfo = (WinAPI.LOAD_DLL_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.LOAD_DLL_DEBUG_INFO));
                             PatchEntryPointIfNeeded(LoadDLLDebugInfo.hFile, LoadDLLDebugInfo.lpBaseOfDll, processHandles[DebugEvent.dwProcessId]);
+                            break;
+                        case WinAPI.EXCEPTION_DEBUG_EVENT:
+                            dwContinueDebugEvent = WinAPI.DBG_EXCEPTION_NOT_HANDLED;
                             break;
                     }
  
@@ -188,6 +192,10 @@ namespace SharpBlock {
                 if (debugEventPtr != null)
                     Marshal.FreeHGlobal(debugEventPtr);
             }
+
+            int exitCode;
+            WinAPI.GetExitCodeProcess(pi.hProcess, out exitCode);
+            Console.WriteLine($"[+] Process {program} with PID {pi.dwProcessId} exited wit code {exitCode}");
         }
     }
 }
