@@ -182,7 +182,7 @@ namespace SharpBlock {
                 .Add("c=|copyright=", "Copyright string to block", v => blockCopyright.Add(v))
                 .Add("p=|product=", "Product string to block", v => blockProduct.Add(v))
                 .Add("d=|description=", "Description string to block", v => blockDescription.Add(v))
-                .Add("b=|bypass=", "Bypasses AMSI within the executed process", v => bypass = v != null)
+                .Add("b=|bypass=", "Bypasses AMSI within the executed process (true|false)", v => bypass = v != null)
                 .Add("h|help", "Display this help", v => showHelp = v != null);
 
             try {
