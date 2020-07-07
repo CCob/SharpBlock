@@ -12,6 +12,10 @@ SharpBlock by @_EthicalChaos_
   -p, --product=VALUE        Product string to block
   -d, --description=VALUE    Description string to block
   -h, --help                 Display this help
+  -b, --bypass=VALUE         Bypasses AMSI within the executed process
   ```
 
-Accompanying Blog Post: https://ethicalchaos.dev/2020/06/14/lets-create-an-edr-and-bypass-it-part-2/
+Accompanying Blog Posts: 
+ * https://ethicalchaos.dev/2020/05/27/lets-create-an-edr-and-bypass-it-part-1/
+ * https://ethicalchaos.dev/2020/06/14/lets-create-an-edr-and-bypass-it-part-2/
+ 
