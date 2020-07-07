@@ -18,4 +18,5 @@ SharpBlock by @_EthicalChaos_
 Accompanying Blog Posts: 
  * https://ethicalchaos.dev/2020/05/27/lets-create-an-edr-and-bypass-it-part-1/
  * https://ethicalchaos.dev/2020/06/14/lets-create-an-edr-and-bypass-it-part-2/
+ * https://www.pentestpartners.com/security-blog/patchless-amsi-bypass-using-sharpblock/
  
