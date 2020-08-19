@@ -8,6 +8,120 @@ using System.Threading.Tasks;
 namespace SharpBlock {
     class PE {
 
+
+        [StructLayout(LayoutKind.Sequential, Pack = 0)]
+        public struct LIST_ENTRY {
+            public IntPtr Flink;
+            public IntPtr Blink;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 0)]
+        public struct LDR_DATA_TABLE_ENTRY {
+            public LIST_ENTRY InLoadOrderModuleListPtr;
+            public LIST_ENTRY InMemoryOrderModuleListPtr;
+            public LIST_ENTRY InInitOrderModuleListPtr;
+            public IntPtr DllBase;
+            public IntPtr EntryPoint;
+            public uint SizeOfImage;
+            public UNICODE_STRING FullDllName;
+            public UNICODE_STRING BaseDllName;
+        }
+
+       
+        [StructLayout(LayoutKind.Sequential, Pack = 0)]
+        public struct PEB_LDR_DATA {
+            public int Length;
+            public int Initialized;
+            public int SsHandle;
+            public LIST_ENTRY InLoadOrderModuleListPtr;
+            public LIST_ENTRY InMemoryOrderModuleListPtr;
+            public LIST_ENTRY InInitOrderModuleListPtr;
+            public int EntryInProgress;
+            public int ShutdownInProgress;
+            public int ShutdownThreadId;         
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct UNICODE_STRING : IDisposable {
+            public ushort Length;
+            public ushort MaximumLength;
+            private IntPtr buffer;
+
+            public UNICODE_STRING(string s) {
+                Length = (ushort)(s.Length * 2);
+                MaximumLength = (ushort)(Length + 2);
+                buffer = Marshal.StringToHGlobalUni(s);
+            }
+
+            public void Dispose() {
+                Marshal.FreeHGlobal(buffer);
+                buffer = IntPtr.Zero;
+            }
+
+            public override string ToString() {
+                return Marshal.PtrToStringUni(buffer);
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CURDIR {
+            public UNICODE_STRING DosPath;
+            public IntPtr Handle;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RTL_USER_PROCESS_PARAMETERS {
+            public uint MaxLen;
+            public uint Len;
+            public uint Flags;
+            public uint DebugFlags;
+            public IntPtr ConsoleHandle;
+            public uint ConsoleFlags;
+            public IntPtr StandardInput;
+            public IntPtr StandardOutput;
+            public IntPtr StandardError;
+            public CURDIR CurrentDirectory;
+            public UNICODE_STRING DllPath;
+            public UNICODE_STRING ImagePathName;
+            public UNICODE_STRING CommandLine;
+            public IntPtr Environment;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LOAD_CONFIGURATION_LAYOUT_64 {
+            public int Characteristics;
+            public int TimeDataStamp;
+            public short MajorVersion;
+            public short MinorVersion;
+            public int GlobalFlagsClear;
+            public int GlobalFlagsSet;
+            public int CriticalScetionDefaultTimeout;
+            public long DeCommitFreeBlockThreshhold;
+            public long DeCommitTotalFreeThreshhold;
+            public long LockPrefixTable;
+            public long MaximumAllocationSize;
+            public long VirtualMemoryThreshhold;
+            public long ProcessAfinityMask;
+            public int ProcessHeapFlags;
+            public short CSDVersion;
+            public short Reserved;
+            public long EditList;
+            public long SecurityCookie;
+            public long SEHandlerTable;
+            public long SEHandlerCount;
+            public long GuardCFCheckFunctionPointer;
+            public long GuardCFDispatchFunctionPointer;
+            public long GuardCFFunctionPointer;
+            public long GuardCFFunctionCount;
+            public int GuardFlags;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 12)]
+            public byte[] CodeIntegrity;
+            public long GuardAddressTakenIatEntryTable;
+            public long GuardAddressTakenIatEntryCount;
+            public long GuardLongJumpTargetTable;
+            public long GuardLongJumpTargetCount;
+        }
+            
         public struct IMAGE_DOS_HEADER {      // DOS .EXE header
             public UInt16 e_magic;              // Magic number
             public UInt16 e_cblp;               // Bytes on last page of file

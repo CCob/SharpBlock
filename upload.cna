@@ -1,0 +1,14 @@
+
+
+beacon_command_register("upload_file", "Uploads a local file and send to a file accessible by the beacon host (including pipes)", "upload_pipe");
+
+sub _upload_file{
+	$handle = openf($2);
+	$data = readb($handle, -1);
+	closef($handle);
+    bupload_raw($1, $3, $data);
+}
+
+alias upload_file {
+	_upload_file($1, $2, $3);
+}

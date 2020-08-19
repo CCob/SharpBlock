@@ -1,0 +1,101 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net40;net35</TargetFrameworks>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <Version>1.1.0</Version>
+    <Authors>Ryan Cobb (@cobbr_io)</Authors>
+    <Description>SharpSploit is a .NET post-exploitation library written in C# https://sharpsploit.cobbr.io/api</Description>
+    <PackageLicenseUrl>https://opensource.org/licenses/BSD-3-Clause</PackageLicenseUrl>
+    <PackageProjectUrl>https://github.com/cobbr/SharpSploit</PackageProjectUrl>
+    <PackageIconUrl>https://cobbr.io/favicon.png</PackageIconUrl>
+    <RepositoryUrl>https://github.com/cobbr/SharpSploit</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>SharpSploit C# .NET post-exploitation offensive security</PackageTags>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net40|AnyCPU'">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DocumentationFile>.\SharpSploit.xml</DocumentationFile>
+    <NoWarn>1701;1702;1591</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net40|AnyCPU'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <DocumentationFile>.\SharpSploit.xml</DocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="Credentials\**" />
+    <Compile Remove="Enumeration\**" />
+    <Compile Remove="Evasion\**" />
+    <Compile Remove="LateralMovement\**" />
+    <Compile Remove="Persistence\**" />
+    <Compile Remove="Pivoting\**" />
+    <Compile Remove="PrivilegeEscalation\**" />
+    <Compile Remove="References\**" />
+    <EmbeddedResource Remove="Credentials\**" />
+    <EmbeddedResource Remove="Enumeration\**" />
+    <EmbeddedResource Remove="Evasion\**" />
+    <EmbeddedResource Remove="LateralMovement\**" />
+    <EmbeddedResource Remove="Persistence\**" />
+    <EmbeddedResource Remove="Pivoting\**" />
+    <EmbeddedResource Remove="PrivilegeEscalation\**" />
+    <EmbeddedResource Remove="References\**" />
+    <None Remove="Credentials\**" />
+    <None Remove="Enumeration\**" />
+    <None Remove="Evasion\**" />
+    <None Remove="LateralMovement\**" />
+    <None Remove="Persistence\**" />
+    <None Remove="Pivoting\**" />
+    <None Remove="PrivilegeEscalation\**" />
+    <None Remove="References\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.ServiceProcess" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.DirectoryServices.Protocols" />
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(TargetFramework)' == 'net35' ">
+    <Reference Include="mscorlib, version=2.0.0.0">
+      <HintPath>.\References\net35\mscorlib.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Management">
+      <HintPath>.\References\net35\System.Management.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Management.Automation">
+      <HintPath>.\References\net35\System.Management.Automation.dll</HintPath>
+    </Reference>
+    <Reference Include="System.DirectoryServices">
+      <HintPath>.\References\net35\System.DirectoryServices.dll</HintPath>
+    </Reference>
+    <Reference Include="System.IdentityModel">
+      <HintPath>.\References\net35\System.IdentityModel.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup Condition=" '$(TargetFramework)' == 'net40' ">
+    <Reference Include="mscorlib, version=4.0.0.0">
+      <HintPath>.\References\net40\mscorlib.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Management">
+      <HintPath>.\References\net40\System.Management.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Management.Automation">
+      <HintPath>.\References\net40\System.Management.Automation.dll</HintPath>
+    </Reference>
+    <Reference Include="System.DirectoryServices">
+      <HintPath>.\References\net40\System.DirectoryServices.dll</HintPath>
+    </Reference>
+    <Reference Include="System.IdentityModel">
+      <HintPath>.\References\net40\System.IdentityModel.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Properties\" />
+  </ItemGroup>
+</Project>

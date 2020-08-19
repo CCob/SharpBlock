@@ -36,6 +36,40 @@ namespace SharpBlock {
             ctx.Rax = result;
         }
 
+        public void SetRegister(int index, long value) {
+            switch (index) {
+                case 0:
+                    ctx.Rax = (ulong)value;
+                    break;
+                case 1:
+                    ctx.Rbx = (ulong)value;
+                    break;
+                case 2:
+                    ctx.Rcx = (ulong)value;
+                    break;
+                case 3:
+                    ctx.Rdx = (ulong)value;
+                    break;
+                default:
+                    throw new NotImplementedException();
+            }           
+        }
+
+        public long GetRegister(int index) {
+            switch (index) {
+                case 0:
+                    return (long)ctx.Rax;
+                case 1:
+                    return (long)ctx.Rbx;
+                case 2:
+                    return (long)ctx.Rcx;
+                case 3:
+                    return (long)ctx.Rdx;
+                default:
+                    throw new NotImplementedException();
+            }
+        }
+
         public override void PopStackPointer() {
             ctx.Rsp += 8;
         }

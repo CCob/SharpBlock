@@ -30,6 +30,13 @@ namespace SharpBlock
         public const UInt32 CREATE_NEW_CONSOLE = 0x00000010;
 
         [StructLayout(LayoutKind.Sequential)]
+        public struct OUTPUT_DEBUG_STRING_INFO {
+            public IntPtr lpDebugStringData;
+            public ushort fUnicode;
+            public ushort nDebugStringLength;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         public struct EXCEPTION_RECORD {
             public uint ExceptionCode;
             public uint ExceptionFlags;
@@ -344,6 +351,12 @@ namespace SharpBlock
             DIRECT_IMPERSONATION = (0x0200)
         }
 
+        public enum StdHandle : int {
+            STD_INPUT_HANDLE = -10,
+            STD_OUTPUT_HANDLE = -11,
+            STD_ERROR_HANDLE = -12
+        };
+
         [DllImport("kernel32.dll")]
         public static extern bool GetFileSizeEx(IntPtr hFile, out long lpFileSize);
 
@@ -396,5 +409,17 @@ namespace SharpBlock
         public static extern IntPtr LoadLibrary([MarshalAs(UnmanagedType.LPStr)] string lpFileName);
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern IntPtr OpenThread(ThreadAccess dwDesiredAccess, bool bInheritHandle, uint dwThreadId);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr GetStdHandle(StdHandle nStdHandle);
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern int NtSetInformationProcess(IntPtr hProcess, int processInformationClass, IntPtr processInformation, int processInformationLength);
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern int NtQueryInformationProcess(IntPtr hProcess, int processInformationClass, IntPtr processInformation, int processInformationLength, out ulong returnLength);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct ProcessConsoleHostProcessInfo {
+            public int pidLow;
+            public int pidHigh;
+        }
     }
 }
