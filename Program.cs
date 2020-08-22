@@ -337,6 +337,11 @@ namespace SharpBlock {
             Marshal.FreeHGlobal(emptyMem);
         }
 
+        static bool IsHostPEGUIApp(string path) {    
+            Execute.PE pe =  SharpSploit.Execution.PE.Load(File.ReadAllBytes(path));
+            return pe.OptionalHeader64.Subsystem == 2;
+        }
+
         static void HideHollowedProcess(IntPtr hProcess, HostProcessInfo hpi) {
 
             //Pull out the current image headers
@@ -457,11 +462,25 @@ namespace SharpBlock {
 
                 Console.WriteLine($"[+] in-proc AMSI 0x{amsiBase.ToInt64():x16}");
 
+                IntPtr stdOut;
+                IntPtr stdErr;
+                IntPtr stdIn;
+                IntPtr currentProcess = new IntPtr(-1);
+                
+                WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_OUTPUT_HANDLE), currentProcess, out stdOut, 0, true, 2);
+                WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_ERROR_HANDLE), currentProcess, out stdErr, 0, true, 2);
+                WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_INPUT_HANDLE), currentProcess, out stdIn, 0, true, 2);
+
                 STARTUPINFO startupInfo = new STARTUPINFO();
                 startupInfo.cb = (uint)Marshal.SizeOf(startupInfo);
+                startupInfo.dwFlags = 0x00000101;
+                startupInfo.hStdOutput = stdOut;
+                startupInfo.hStdError = stdErr;
+                startupInfo.hStdInput = stdIn;
+
                 PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
 
-                if (!CreateProcess(hostProcess != null ? hostProcess : program, $"\"{hostProcess}\" {programArgs}", IntPtr.Zero, IntPtr.Zero, false, WinAPI.DEBUG_PROCESS, IntPtr.Zero, null,
+                if (!CreateProcess(hostProcess != null ? hostProcess : program, $"\"{hostProcess}\" {programArgs}", IntPtr.Zero, IntPtr.Zero, true, WinAPI.DEBUG_PROCESS, IntPtr.Zero, null,
                     ref startupInfo, out pi)) {
                     Console.WriteLine($"[!] Failed to create process { (hostProcess != null ? hostProcess : program) } with error {Marshal.GetLastWin32Error()}");
                     return;
@@ -571,7 +590,7 @@ namespace SharpBlock {
 
                 int exitCode;
                 WinAPI.GetExitCodeProcess(pi.hProcess, out exitCode);
-                Console.WriteLine($"[+] Process {program} with PID {pi.dwProcessId} exited wit code {exitCode}");
+                Console.WriteLine($"[+] Process {program} with PID {pi.dwProcessId} exited wit code {exitCode:x}");
 
             }catch(Exception e) {
                 Console.WriteLine($"[!] SharpBlock failed with error {e.Message}");
