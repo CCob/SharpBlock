@@ -61,9 +61,9 @@ namespace SharpBlock {
 
         public abstract void PopStackPointer();
 
-        public abstract void EnableBreakpoint(IntPtr address);
+        public abstract void EnableBreakpoint(IntPtr address, int index);
 
-        public abstract void ClearBreakpoint();
+        public abstract void ClearBreakpoint(int index);
 
         public abstract void EnableSingleStep();
     }

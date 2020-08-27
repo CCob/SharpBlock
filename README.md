@@ -5,10 +5,10 @@ A method of bypassing EDR's active projection DLL's by preventing entry point ex
 
 * Blocks EDR DLL entry point execution, which prevents EDR hooks from being placed.
 * Patchless AMSI bypass that is undetectable from scanners looking for Amsi.dll code patches at runtime.
-* Can use a host process that is replaced with an implant PE that can be loaded from disk, HTTP or named pipe (Cobalt Strike)
+* Host process that is replaced with an implant PE that can be loaded from disk, HTTP or named pipe (Cobalt Strike)
 * Implanted process is hidden to help evade scanners looking for hollowed processes.
-
-
+* Command line args are spoofed and implanted after process creation using stealthy EDR detection method.
+* Patchless ETW bypass 
 
 ```
 SharpBlock by @_EthicalChaos_
@@ -20,10 +20,13 @@ SharpBlock by @_EthicalChaos_
   -c, --copyright=VALUE      Copyright string to block
   -p, --product=VALUE        Product string to block
   -d, --description=VALUE    Description string to block
-  -b, --bypass=VALUE         Bypasses AMSI within the executed process (true|
-                               false)
   -s, --spawn=VALUE          Host process to spawn for swapping with the target
                                exe
+      --disable-bypass-amsi  Disable AMSI bypassAmsi
+      --disable-bypass-cmdline
+                             Disable command line bypass
+      --disable-bypass-etw   Disable ETW bypass
+      --disable-header-patch Disable process hollow detection bypass
   -h, --help                 Display this help
   ```
 

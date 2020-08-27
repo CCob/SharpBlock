@@ -74,15 +74,29 @@ namespace SharpBlock {
             ctx.Rsp += 8;
         }
 
-        public override void EnableBreakpoint(IntPtr address) {
-            //Currently only supports first hardware breakpoint, could
-            //be expanded to support up to 4 hardware breakpoint for altering
-            //ETW and other potensial bypasses
-            ctx.Dr0 = (ulong)address.ToInt64();
-            //Set bits 16-19 as 0, DR0 for execute HBP
-            ctx.Dr7 = SetBits(ctx.Dr7, 16, 4, 0);
-            //Set DR0 HBP as enabled
-            ctx.Dr7 = SetBits(ctx.Dr7, 0, 2, 3);
+        public override void EnableBreakpoint(IntPtr address, int index) {
+
+            switch (index) {
+                case 0:
+                    ctx.Dr0 = (ulong)address.ToInt64();
+                    break;
+                case 1:
+                    ctx.Dr1 = (ulong)address.ToInt64();
+                    break;
+                case 2:
+                    ctx.Dr2 = (ulong)address.ToInt64();
+                    break;
+                case 3:
+                    ctx.Dr3 = (ulong)address.ToInt64();
+                    break;
+            }
+           
+            //Set bits 16-31 as 0, which sets
+            //DR0-DR3 HBP's for execute HBP
+            ctx.Dr7 = SetBits(ctx.Dr7, 16, 16, 0);
+            
+            //Set DRx HBP as enabled for local mode
+            ctx.Dr7 = SetBits(ctx.Dr7, (index * 2), 1, 1);
             ctx.Dr6 = 0;
         }
 
@@ -91,8 +105,27 @@ namespace SharpBlock {
             ctx.EFlags |= (1 << 8);
         }
 
-        public override void ClearBreakpoint() {
-            ctx.Dr0 = ctx.Dr6 = ctx.Dr7 = 0;
+        public override void ClearBreakpoint(int index) {
+
+            //Clear the releveant hardware breakpoint
+            switch (index) {
+                case 0:
+                    ctx.Dr0 = 0;
+                    break;
+                case 1:
+                    ctx.Dr1 = 0;
+                    break;
+                case 2:
+                    ctx.Dr2 = 0;
+                    break;
+                case 3:
+                    ctx.Dr3 = 0;
+                    break;
+            }
+
+            //Clear DRx HBP to disable for local mode
+            ctx.Dr7 = SetBits(ctx.Dr7, (index * 2), 1, 0);
+            ctx.Dr6 = 0;
             ctx.EFlags = 0;
         }
 

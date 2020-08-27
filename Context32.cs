@@ -41,11 +41,11 @@ namespace SharpBlock {
             ctx.Esp += 4;
         }
 
-        public override void EnableBreakpoint(IntPtr address) {
+        public override void EnableBreakpoint(IntPtr address, int index) {
             //Currently only supports first hardware breakpoint, could
             //be expanded to support up to 4 hardware breakpoint for altering
             //ETW and other potensial bypasses
-            ctx.Dr0 = (uint)address.ToInt64();
+            ctx.Dr0 = (uint)address.ToInt32();
             //Set bits 16-19 as 0, DR0 for execute HBP
             ctx.Dr7 = (uint)SetBits((ulong)ctx.Dr7, 16, 4, 0);
             //Set DR0 HBP as enabled
@@ -58,7 +58,7 @@ namespace SharpBlock {
             ctx.EFlags |= (1 << 8);
         }
 
-        public override void ClearBreakpoint() {
+        public override void ClearBreakpoint(int index) {
             ctx.Dr0 = ctx.Dr6 = ctx.Dr7 = 0;
             ctx.EFlags = 0;
         }
