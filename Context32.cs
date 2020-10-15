@@ -64,17 +64,45 @@ namespace SharpBlock {
         }
 
         protected override bool SetContext(IntPtr thread, IntPtr context) {
-            if(IntPtr.Size == 8)
-                return WinAPI.Wow64SetThreadContext(thread, context);
-            else
-                return WinAPI.SetThreadContext(thread, context);
+            return WinAPI.SetThreadContext(thread, context);
         }
 
         protected override bool GetContext(IntPtr thread, IntPtr context) {
-            if (IntPtr.Size == 8)
-                return WinAPI.Wow64GetThreadContext(thread, context);
-            else
-                return WinAPI.SetThreadContext(thread, context);
+            return WinAPI.GetThreadContext(thread, context);
+        }
+
+        public override void SetRegister(int index, long value) {
+            switch (index) {
+                case 0:
+                    ctx.Eax = (uint)value;
+                    break;
+                case 1:
+                    ctx.Ebx = (uint)value;
+                    break;
+                case 2:
+                    ctx.Ecx = (uint)value;
+                    break;
+                case 3:
+                    ctx.Edx = (uint)value;
+                    break;
+                default:
+                    throw new NotImplementedException();
+            }
+        }
+
+        public override long GetRegister(int index) {
+            switch (index) {
+                case 0:
+                    return (long)ctx.Eax;
+                case 1:
+                    return (long)ctx.Ebx;
+                case 2:
+                    return (long)ctx.Ecx;
+                case 3:
+                    return (long)ctx.Edx;
+                default:
+                    throw new NotImplementedException();
+            }
         }
     }
 }

@@ -82,10 +82,21 @@ namespace SharpBlock
             public UInt32 dwDebugEventCode;
             public UInt32 dwProcessId;
             public UInt32 dwThreadId;
-            public UInt32 dw64PlatformPadding;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64, ArraySubType = UnmanagedType.U1)]
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 128, ArraySubType = UnmanagedType.U1)]
             public byte[] u;  // union of degug infos
         }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DEBUG_EVENT64 {
+            public UInt32 dwDebugEventCode;
+            public UInt32 dwProcessId;
+            public UInt32 dwThreadId;
+            public UInt32 dw64PlatformPadding;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 128, ArraySubType = UnmanagedType.U1)]
+            public byte[] u;  // union of degug infos
+        }
+
+
         [StructLayout(LayoutKind.Sequential)]
         public struct STARTUPINFO {
             public UInt32 cb;
@@ -137,6 +148,7 @@ namespace SharpBlock
             FileMapExecute = 0x0020,
         }
 
+        [Flags]
         public enum CONTEXT64_FLAGS : uint {
             CONTEXT64_AMD64 = 0x100000,
             CONTEXT64_CONTROL = CONTEXT64_AMD64 | 0x01,
@@ -148,6 +160,7 @@ namespace SharpBlock
             CONTEXT64_ALL = CONTEXT64_CONTROL | CONTEXT64_INTEGER | CONTEXT64_SEGMENTS | CONTEXT64_FLOATING_POINT | CONTEXT64_DEBUG_REGISTERS
         }
 
+        [Flags]
         public enum CONTEXT_FLAGS : uint {
             CONTEXT_i386 = 0x10000,
             CONTEXT_i486 = 0x10000,   //  same as i386

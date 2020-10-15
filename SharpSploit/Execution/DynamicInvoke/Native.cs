@@ -339,6 +339,12 @@ namespace SharpSploit.Execution.DynamicInvoke
             };
 
             Execute.Native.NTSTATUS retValue = (Execute.Native.NTSTATUS)Generic.DynamicAPIInvoke(@"ntdll.dll", @"NtAllocateVirtualMemory", typeof(DELEGATES.NtAllocateVirtualMemory), ref funcargs);
+
+            if(retValue == Execute.Native.NTSTATUS.ConflictingAddresses) {
+                 funcargs = new object[] { ProcessHandle, IntPtr.Zero, ZeroBits, RegionSize, AllocationType, Protect };
+                 retValue = (Execute.Native.NTSTATUS)Generic.DynamicAPIInvoke(@"ntdll.dll", @"NtAllocateVirtualMemory", typeof(DELEGATES.NtAllocateVirtualMemory), ref funcargs);
+            }
+
             if (retValue == Execute.Native.NTSTATUS.AccessDenied)
             {
                 // STATUS_ACCESS_DENIED

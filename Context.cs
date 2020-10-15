@@ -66,5 +66,9 @@ namespace SharpBlock {
         public abstract void ClearBreakpoint(int index);
 
         public abstract void EnableSingleStep();
+
+        public abstract void SetRegister(int index, long value);
+
+        public abstract long GetRegister(int index);
     }
 }

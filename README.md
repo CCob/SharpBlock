@@ -12,7 +12,7 @@ A method of bypassing EDR's active projection DLL's by preventing entry point ex
 
 ```
 SharpBlock by @_EthicalChaos_
-  DLL Blocking app for child processes x86_64
+  DLL Blocking app for child processes x64
 
   -e, --exe=VALUE            Program to execute (default cmd.exe)
   -a, --args=VALUE           Arguments for program (default null)
@@ -22,6 +22,8 @@ SharpBlock by @_EthicalChaos_
   -d, --description=VALUE    Description string to block
   -s, --spawn=VALUE          Host process to spawn for swapping with the target
                                exe
+  -w, --show                 Show the lauched process window instead of the
+                               default hide
       --disable-bypass-amsi  Disable AMSI bypassAmsi
       --disable-bypass-cmdline
                              Disable command line bypass

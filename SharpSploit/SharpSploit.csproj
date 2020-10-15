@@ -12,6 +12,7 @@
     <RepositoryUrl>https://github.com/cobbr/SharpSploit</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>SharpSploit C# .NET post-exploitation offensive security</PackageTags>
+    <Platforms>AnyCPU;x86;x64</Platforms>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net40|AnyCPU'">

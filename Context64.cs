@@ -36,7 +36,7 @@ namespace SharpBlock {
             ctx.Rax = result;
         }
 
-        public void SetRegister(int index, long value) {
+        public override void SetRegister(int index, long value) {
             switch (index) {
                 case 0:
                     ctx.Rax = (ulong)value;
@@ -55,7 +55,7 @@ namespace SharpBlock {
             }           
         }
 
-        public long GetRegister(int index) {
+        public override long GetRegister(int index) {
             switch (index) {
                 case 0:
                     return (long)ctx.Rax;
