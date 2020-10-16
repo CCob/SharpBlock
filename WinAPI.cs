@@ -118,6 +118,13 @@ namespace SharpBlock
             public IntPtr hStdOutput;
             public IntPtr hStdError;
         }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct STARTUPINFOEX {
+            public STARTUPINFO StartupInfo;
+            public IntPtr lpAttributeList;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         public struct PROCESS_INFORMATION {
             public IntPtr hProcess;
@@ -342,7 +349,7 @@ namespace SharpBlock
            UInt32 dwCreationFlags,
            IntPtr lpEnvironment,
            string lpCurrentDirectory,
-           [In] ref STARTUPINFO lpStartupInfo,
+           [In] ref STARTUPINFOEX lpStartupInfo,
            out PROCESS_INFORMATION lpProcessInformation);
 
         [Flags]
@@ -363,6 +370,23 @@ namespace SharpBlock
             STD_OUTPUT_HANDLE = -11,
             STD_ERROR_HANDLE = -12
         };
+
+        [Flags]
+        public enum ProcessAccessFlags : uint {
+            All = 0x001F0FFF,
+            Terminate = 0x00000001,
+            CreateThread = 0x00000002,
+            VirtualMemoryOperation = 0x00000008,
+            VirtualMemoryRead = 0x00000010,
+            VirtualMemoryWrite = 0x00000020,
+            DuplicateHandle = 0x00000040,
+            CreateProcess = 0x000000080,
+            SetQuota = 0x00000100,
+            SetInformation = 0x00000200,
+            QueryInformation = 0x00000400,
+            QueryLimitedInformation = 0x00001000,
+            Synchronize = 0x00100000
+        }
 
         [DllImport("kernel32.dll")]
         public static extern bool GetFileSizeEx(IntPtr hFile, out long lpFileSize);
@@ -431,5 +455,16 @@ namespace SharpBlock
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool DuplicateHandle(IntPtr hSourceProcessHandle, IntPtr hSourceHandle, IntPtr hTargetProcessHandle, out IntPtr lpTargetHandle, uint dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwOptions);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool InitializeProcThreadAttributeList(IntPtr lpAttributeList, int dwAttributeCount, int dwFlags, ref IntPtr lpSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool UpdateProcThreadAttribute(IntPtr lpAttributeList, uint dwFlags, IntPtr Attribute, IntPtr lpValue, IntPtr cbSize, IntPtr lpPreviousValue, IntPtr lpReturnSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr OpenProcess(ProcessAccessFlags processAccess, bool bInheritHandle, int processId);
     }
 }
