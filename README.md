@@ -21,6 +21,7 @@ SharpBlock by @_EthicalChaos_
   -p, --product=VALUE        Product string to block
   -d, --description=VALUE    Description string to block
   -s, --spawn=VALUE          Host process to spawn for swapping with the target
+  -ppid=VALUE                Parent process ID for spawned child (PPID Spoofing)
                                exe
   -w, --show                 Show the lauched process window instead of the
                                default hide
