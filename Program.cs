@@ -123,7 +123,7 @@ namespace SharpBlock {
                 if (WinAPI.WriteProcessMemory(hProcess, entryPoint, retIns, 1, out bytesWritten)) {
                     Console.WriteLine("[+] Successfully patched DLL Entry Point");
                 } else {
-                    Console.WriteLine("[!] Failed patched DLL Entry Point");
+                    Console.WriteLine("[!] Failed patched DLL Entry Point with error 0x{0:x}", Marshal.GetLastWin32Error());
                 }
             }
 
