@@ -70,5 +70,7 @@ namespace SharpBlock {
         public abstract void SetRegister(int index, long value);
 
         public abstract long GetRegister(int index);
+
+        public abstract long GetParameter(int index, IntPtr hProcess);
     }
 }

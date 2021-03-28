@@ -104,5 +104,13 @@ namespace SharpBlock {
                     throw new NotImplementedException();
             }
         }
+
+        public override long GetParameter(int index, IntPtr hProcess) {
+            long parameterAddress = ctx.Esp + 4 + (index * 4);            
+            byte[] parameterValue = new byte[4];
+            IntPtr bytesRead;
+            WinAPI.ReadProcessMemory(hProcess, new IntPtr(parameterAddress), parameterValue, 4, out bytesRead);
+            return BitConverter.ToUInt32(parameterValue, 0);
+        }
     }
 }

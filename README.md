@@ -8,7 +8,8 @@ A method of bypassing EDR's active projection DLL's by preventing entry point ex
 * Host process that is replaced with an implant PE that can be loaded from disk, HTTP or named pipe (Cobalt Strike)
 * Implanted process is hidden to help evade scanners looking for hollowed processes.
 * Command line args are spoofed and implanted after process creation using stealthy EDR detection method.
-* Patchless ETW bypass 
+* Patchless ETW bypass.
+* Blocks NtProtectVirtualMemory invocation when callee is within the range of a blocked DLL's address space
 
 ```
 SharpBlock by @_EthicalChaos_
