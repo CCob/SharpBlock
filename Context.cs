@@ -19,7 +19,7 @@ namespace SharpBlock {
 
         public Context() {
             //Get/SetThreadContext needs to be 16 byte aligned memory offset on x64
-            mem = Marshal.AllocHGlobal(Marshal.SizeOf(ContextStruct) + 15);
+            mem = Marshal.AllocHGlobal(Marshal.SizeOf(ContextStruct) + 1024);
             memAligned = new IntPtr(mem.ToInt64() & ~0xF);
         }
 

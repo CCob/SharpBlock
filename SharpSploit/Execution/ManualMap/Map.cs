@@ -127,8 +127,8 @@ namespace SharpSploit.Execution.ManualMap
             }
 
             PE.IMAGE_DATA_DIRECTORY idd = PEINFO.Is32Bit ? PEINFO.OptHeader32.BaseRelocationTable : PEINFO.OptHeader64.BaseRelocationTable;
-            Int64 ImageDelta = PEINFO.Is32Bit ? (Int64)((UInt64)FinalModuleMemoryBase - PEINFO.OptHeader32.ImageBase) :
-                                                (Int64)((UInt64)FinalModuleMemoryBase - PEINFO.OptHeader64.ImageBase);
+            long ImageDelta = PEINFO.Is32Bit ? (long)((long)FinalModuleMemoryBase - PEINFO.OptHeader32.ImageBase) :
+                                                (long)((int)FinalModuleMemoryBase - (int)PEINFO.OptHeader64.ImageBase);
 
             if(idd.Size == 0) {
                 throw new InvalidOperationException("No relocation information available");
@@ -161,16 +161,23 @@ namespace SharpSploit.Execution.ManualMap
                     {
                         try
                         {
-                            IntPtr pPatch = (IntPtr)((UInt64)ModuleMemoryBase + ibr.VirtualAdress + RelocPatch);
+                            //int rva = (int)ibr.VirtualAdress + 0x37a9;
+                            if(ibr.VirtualAdress == 0x97000 && RelocValue == 0x37a9) {
+                                var bp = 1;
+                            }
+
+                            IntPtr pPatch = (IntPtr)((ulong)ModuleMemoryBase + ibr.VirtualAdress + RelocPatch);
                             if (RelocType == 0x3) // IMAGE_REL_BASED_HIGHLOW (x86)
                             {
-                                Int32 OriginalPtr = Marshal.ReadInt32(pPatch);
-                                Marshal.WriteInt32(pPatch, (OriginalPtr + (Int32)ImageDelta));
+                                int OriginalPtr = Marshal.ReadInt32(pPatch);
+                                Marshal.WriteInt32(pPatch, OriginalPtr + (int)ImageDelta);
                             }
-                            else // IMAGE_REL_BASED_DIR64 (x64)
+                            else if(RelocType == 0xA) // IMAGE_REL_BASED_DIR64 (x64)
                             {
-                                Int64 OriginalPtr = Marshal.ReadInt64(pPatch);
-                                Marshal.WriteInt64(pPatch, (OriginalPtr + ImageDelta));
+                                long OriginalPtr = Marshal.ReadInt64(pPatch);
+                                Marshal.WriteInt64(pPatch, OriginalPtr + ImageDelta);
+                            } else {
+                                throw new NotImplementedException($"Reloc type 0x{RelocType:x} not implemented");
                             }
                         }
                         catch

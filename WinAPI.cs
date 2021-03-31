@@ -2,8 +2,7 @@
 using System.Text;
 using System.Runtime.InteropServices;
 
-namespace SharpBlock
-{
+namespace SharpBlock {
     public class WinAPI {
         public const UInt32 DBG_CONTINUE = 0x00010002;
         public const UInt32 DBG_EXCEPTION_NOT_HANDLED = 0x80010001;
@@ -388,6 +387,81 @@ namespace SharpBlock
             Synchronize = 0x00100000
         }
 
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        public struct SYSTEM_HANDLE_INFORMATION {
+            public UInt32 OwnerPID;
+            public Byte ObjectType;
+            public Byte HandleFlags;
+            public UInt16 HandleValue;
+            public UIntPtr ObjectPointer;
+            public IntPtr AccessMask;
+        }
+
+        public struct IO_STATUS_BLOCK {
+            uint status;
+            ulong information;
+        }
+
+        public enum FILE_INFORMATION_CLASS {
+            FileDirectoryInformation = 1,     // 1
+            FileFullDirectoryInformation,     // 2
+            FileBothDirectoryInformation,     // 3
+            FileBasicInformation,         // 4
+            FileStandardInformation,      // 5
+            FileInternalInformation,      // 6
+            FileEaInformation,        // 7
+            FileAccessInformation,        // 8
+            FileNameInformation,          // 9
+            FileRenameInformation,        // 10
+            FileLinkInformation,          // 11
+            FileNamesInformation,         // 12
+            FileDispositionInformation,       // 13
+            FilePositionInformation,      // 14
+            FileFullEaInformation,        // 15
+            FileModeInformation = 16,     // 16
+            FileAlignmentInformation,     // 17
+            FileAllInformation,           // 18
+            FileAllocationInformation,    // 19
+            FileEndOfFileInformation,     // 20
+            FileAlternateNameInformation,     // 21
+            FileStreamInformation,        // 22
+            FilePipeInformation,          // 23
+            FilePipeLocalInformation,     // 24
+            FilePipeRemoteInformation,    // 25
+            FileMailslotQueryInformation,     // 26
+            FileMailslotSetInformation,       // 27
+            FileCompressionInformation,       // 28
+            FileObjectIdInformation,      // 29
+            FileCompletionInformation,    // 30
+            FileMoveClusterInformation,       // 31
+            FileQuotaInformation,         // 32
+            FileReparsePointInformation,      // 33
+            FileNetworkOpenInformation,       // 34
+            FileAttributeTagInformation,      // 35
+            FileTrackingInformation,      // 36
+            FileIdBothDirectoryInformation,   // 37
+            FileIdFullDirectoryInformation,   // 38
+            FileValidDataLengthInformation,   // 39
+            FileShortNameInformation,     // 40
+            FileHardLinkInformation = 46    // 46    
+        }
+
+        public enum OBJECT_INFORMATION_CLASS : int {
+            ObjectBasicInformation = 0,
+            ObjectNameInformation = 1,
+            ObjectTypeInformation = 2,
+            ObjectAllTypesInformation = 3,
+            ObjectHandleInformation = 4
+        }
+
+
+        [StructLayout(LayoutKind.Sequential, Pack = 16)]
+        struct FILE_NAME_INFORMATION {
+            uint FileNameLength;
+            [MarshalAs(UnmanagedType.LPStr, SizeConst = 65535)]
+            string FileName;
+        }
+
         [DllImport("kernel32.dll")]
         public static extern bool GetFileSizeEx(IntPtr hFile, out long lpFileSize);
 
@@ -466,5 +540,8 @@ namespace SharpBlock
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern IntPtr OpenProcess(ProcessAccessFlags processAccess, bool bInheritHandle, int processId);
+
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern uint NtQueryInformationFile(IntPtr FileHandle, ref IO_STATUS_BLOCK IoStatusBlock, IntPtr FileInformation, int FileInformationLength, FILE_INFORMATION_CLASS FileInformationClass);
     }
 }
